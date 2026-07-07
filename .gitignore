@@ -1,0 +1,31 @@
+# Build outputs
+bin/
+dist/
+build/
+
+PROJECT_PLAN.md
+# Go
+*.exe
+*.test
+*.out
+coverage.out
+.coverprofile
+
+# Go workspace / module caches
+pkg/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
