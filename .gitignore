@@ -2,7 +2,7 @@
 bin/
 dist/
 build/
-
+AGENTS.md
 PROJECT_PLAN.md
 # Go
 *.exe
