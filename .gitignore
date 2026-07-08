@@ -10,6 +10,7 @@ PROJECT_PLAN.md
 *.out
 coverage.out
 .coverprofile
+api
 
 # Go workspace / module caches
 pkg/
