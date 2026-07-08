@@ -1,18 +1,6 @@
-bin/
-dist/
-build/
-.*test
-coverage.out
-PROJECT_PLAN.md
+package main
 
-go.work
-go.work.sum 
-
-
-# Env
-.env
-.env.*
-
-# OS 
-.DS_Store
-
+import (
+	"log"
+	"net/http"
+)
