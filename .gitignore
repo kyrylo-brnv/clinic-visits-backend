@@ -30,3 +30,4 @@ logs/
 .vscode/
 *.swp
 *.swo
+scratch/
