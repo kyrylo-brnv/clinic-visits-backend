@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/smithautotest/clinic-visits/internal/config"
+	"github.com/smithautotest/clinic-visits/internal/database"
 )
 
 type healthResponse struct {
@@ -24,6 +27,25 @@ func main() {
 	appServerConfig, err := config.LoadAppServerConfig()
 	if err != nil {
 		log.Fatal("Error loading config:", err)
+	}
+
+	dbConfig, err := config.LoadDatabaseConfig()
+	if err != nil {
+		log.Fatal("Error loading database config:", err)
+	}
+
+	pool, err := database.NewPostgresPool(dbConfig)
+	if err != nil {
+		log.Fatal("Error creating database pool:", err)
+	}
+	defer pool.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = pool.Ping(ctx)
+	if err != nil {
+		log.Fatal("Error pinging database:", err)
 	}
 
 	mux := http.NewServeMux()
