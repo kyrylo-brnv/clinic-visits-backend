@@ -1,16 +1,15 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/smithautotest/clinic-visits/internal/config"
 	"github.com/smithautotest/clinic-visits/internal/database"
+	"github.com/smithautotest/clinic-visits/internal/patient"
 )
 
 type healthResponse struct {
@@ -29,28 +28,26 @@ func main() {
 		log.Fatal("Error loading config:", err)
 	}
 
-	dbConfig, err := config.LoadDatabaseConfig()
+	databaseConfig, err := config.LoadDatabaseConfig()
 	if err != nil {
 		log.Fatal("Error loading database config:", err)
 	}
 
-	pool, err := database.NewPostgresPool(dbConfig)
+	pool, err := database.NewPostgresPool(databaseConfig)
 	if err != nil {
-		log.Fatal("Error creating database pool:", err)
+		log.Fatal("Error creating postgres pool:", err)
 	}
 	defer pool.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err = pool.Ping(ctx)
-	if err != nil {
-		log.Fatal("Error pinging database:", err)
-	}
-
+	address := ":" + strconv.Itoa(appServerConfig.HTTPPort)
+	// TODO: add router
+	patientRepo := patient.NewPostgresRepository(pool)
+	patientHandler := patient.NewHandler(patientRepo)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(appServerConfig.HTTPPort), mux))
+	mux.HandleFunc("/patients", patientHandler.ListPatients)
+
+	log.Fatal(http.ListenAndServe(address, mux))
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
