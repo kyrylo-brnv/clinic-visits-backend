@@ -17,7 +17,10 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	}
 }
 
-func (r *PostgresRepository) List(ctx context.Context) ([]Patient, error) {
+func (r *PostgresRepository) Search(
+	ctx context.Context,
+	request PatientSearchRequest,
+) ([]Patient, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT 
 			id::text, 
