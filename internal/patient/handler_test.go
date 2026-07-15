@@ -26,18 +26,18 @@ func NewFakeRepository() *FakeRepository {
 	}
 }
 
-func (r *FakeRepository) List(ctx context.Context) ([]Patient, error) {
+func (r *FakeRepository) Search(ctx context.Context, request PatientSearchRequest) ([]Patient, error) {
 	return r.Patients, nil
 }
 
-func TestListPatients(t *testing.T) {
+func TestSearchPatients(t *testing.T) {
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
 	request := httptest.NewRequest(http.MethodGet, "/patients", nil)
 	response := httptest.NewRecorder()
 
-	handler.ListPatients(response, request)
+	handler.SearchPatients(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("Expected status code %d, got %d", http.StatusOK, response.Code)

@@ -45,7 +45,7 @@ func main() {
 	patientHandler := patient.NewHandler(patientRepo)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/patients", patientHandler.ListPatients)
+	mux.HandleFunc("/patients", patientHandler.SearchPatients)
 
 	log.Fatal(http.ListenAndServe(address, mux))
 }
