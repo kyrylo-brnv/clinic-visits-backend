@@ -12,7 +12,7 @@ type Handler struct {
 }
 
 func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
-	if !httpapi.RequireMethod(w, r, "QUERY") {
+	if !httpapi.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -22,12 +22,31 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&request); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		http.Error(
+			w,
+			"invalid request body",
+			http.StatusBadRequest)
+		return
+	}
+
+	if request.Search.FirstName == "" &&
+		request.Search.LastName == "" {
+		httpapi.WriteJSONResponse(
+			w,
+			http.StatusBadRequest,
+			map[string]string{
+				"error": "At least 1 searchable field is required",
+			},
+		)
+		return
 	}
 
 	patients, err := h.repo.Search(r.Context(), request)
 	if err != nil {
-		http.Error(w, "failed to search patients", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"failed to search patients",
+			http.StatusInternalServerError)
 		return
 	}
 
