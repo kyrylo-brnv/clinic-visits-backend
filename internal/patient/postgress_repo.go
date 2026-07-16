@@ -3,6 +3,7 @@ package patient
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,6 +22,10 @@ func (r *PostgresRepository) Search(
 	ctx context.Context,
 	request PatientSearchRequest,
 ) ([]Patient, error) {
+
+	firstName := escapeLike(request.Search.FirstName)
+	lastName := escapeLike(request.Search.LastName)
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT 
 			id::text, 
@@ -31,8 +36,12 @@ func (r *PostgresRepository) Search(
 			is_deleted
 		FROM patients 
 		WHERE is_deleted = false
+			AND ($1 = '' OR first_name ILIKE '%' || $1 || '%')
+			AND ($2 = '' OR last_name ILIKE '%' || $2 || '%')
 		ORDER BY created_at DESC
-	`)
+	`,
+		firstName,
+		lastName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query patients: %w", err)
 	}
@@ -63,4 +72,12 @@ func (r *PostgresRepository) Search(
 	}
 
 	return patients, nil
+}
+
+func escapeLike(value string) string {
+	return strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	).Replace(value)
 }
