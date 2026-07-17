@@ -8,10 +8,7 @@ type PatientSearch struct {
 }
 
 type PatientFilter struct {
-	FirstName   string `json:"first_name"`
-	LastName    string `json:"last_name"`
-	DateOfBirth string `json:"date_of_birth"`
-	Gender      string `json:"gender"`
+	Id string `json:"id"`
 }
 
 type PatientSort struct {
@@ -33,4 +30,5 @@ type PatientPagination struct {
 
 type Repository interface {
 	Search(ctx context.Context, request PatientSearchRequest) ([]Patient, error)
+	Filter(ctx context.Context, request PatientFilter) ([]Patient, error)
 }
