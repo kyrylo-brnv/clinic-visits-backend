@@ -18,6 +18,56 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	}
 }
 
+func (r *PostgresRepository) Filter(
+	ctx context.Context,
+	request PatientFilter,
+) ([]Patient, error) {
+	id := request.Id
+
+	rows, err := r.pool.Query(ctx, `
+			SELECT 
+			id::text, 
+			first_name, 
+			last_name, 
+			date_of_birth::text,
+			gender,
+			is_deleted
+		FROM patients 
+		WHERE id = $1
+	`, id)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter patients: %w", err)
+	}
+	defer rows.Close()
+
+	patients := make([]Patient, 0)
+
+	for rows.Next() {
+		var row Patient
+
+		err := rows.Scan(
+			&row.ID,
+			&row.FirstName,
+			&row.LastName,
+			&row.DateOfBirth,
+			&row.Gender,
+			&row.IsDeleted,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan patients rows")
+		}
+
+		patients = append(patients, row)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", rows.Err())
+	}
+	return patients, nil
+}
+
 func (r *PostgresRepository) Search(
 	ctx context.Context,
 	request PatientSearchRequest,

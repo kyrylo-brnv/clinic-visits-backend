@@ -10,7 +10,22 @@ import (
 
 type FakeRepository struct {
 	Patients    []Patient
-	LastRequest PatientSearchRequest
+	LastSearch  PatientSearchRequest
+	LastFilter  PatientFilter
+	FilterError error
+}
+
+func (r *FakeRepository) Filter(
+	ctx context.Context,
+	request PatientFilter,
+) ([]Patient, error) {
+	r.LastFilter = request
+
+	if r.FilterError != nil {
+		return nil, r.FilterError
+	}
+
+	return r.Patients, nil
 }
 
 func NewFakeRepository() *FakeRepository {
@@ -29,7 +44,7 @@ func NewFakeRepository() *FakeRepository {
 }
 
 func (r *FakeRepository) Search(ctx context.Context, request PatientSearchRequest) ([]Patient, error) {
-	r.LastRequest = request
+	r.LastSearch = request
 	return r.Patients, nil
 }
 
@@ -52,18 +67,18 @@ func TestSearchPatientsValidResponse(t *testing.T) {
 
 	handler.SearchPatients(response, request)
 
-	if repo.LastRequest.Search.FirstName != "ann" {
+	if repo.LastSearch.Search.FirstName != "ann" {
 		t.Fatalf(
 			"expected first name search %q, got %q",
 			"ann",
-			repo.LastRequest.Search.FirstName,
+			repo.LastSearch.Search.FirstName,
 		)
 	}
 
-	if repo.LastRequest.Search.LastName != "" {
+	if repo.LastSearch.Search.LastName != "" {
 		t.Fatalf(
 			"expected empty last name search, got %q",
-			repo.LastRequest.Search.LastName,
+			repo.LastSearch.Search.LastName,
 		)
 	}
 
@@ -140,5 +155,86 @@ func TestSearchPatientsWrongMethod(t *testing.T) {
 			http.StatusMethodNotAllowed,
 			response.Code,
 		)
+	}
+}
+
+func TestFilterPatientsValidResponse(t *testing.T) {
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/filter",
+		strings.NewReader(`{"id":"abc123"}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.FilterPatients(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusOK, response.Code)
+	}
+
+	if repo.LastFilter.Id != "abc123" {
+		t.Fatalf("expected id %q, got %q",
+			"abc123", repo.LastFilter.Id)
+	}
+}
+
+func TestFilterPatientsEmptyID(t *testing.T) {
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/filter",
+		strings.NewReader(`{"id":""}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.FilterPatients(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusBadRequest, response.Code)
+	}
+}
+
+func TestFilterPatientsInvalidJSON(t *testing.T) {
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/filter",
+		strings.NewReader(`invalid json`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.FilterPatients(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusBadRequest, response.Code)
+	}
+}
+
+func TestFilterPatientsWrongMethod(t *testing.T) {
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/patients/filter",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.FilterPatients(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusMethodNotAllowed, response.Code)
 	}
 }
