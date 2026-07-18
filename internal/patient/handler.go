@@ -11,55 +11,6 @@ type Handler struct {
 	repo Repository
 }
 
-func (h Handler) FilterPatients(w http.ResponseWriter, r *http.Request) {
-	if !isPostRequest(w, r) {
-		return
-	}
-
-	var request PatientFilter
-
-	decoder := decodeRequestBody(r)
-
-	if err := decoder.Decode(&request); err != nil {
-		http.Error(
-			w,
-			"invalid request body",
-			http.StatusBadRequest)
-		return
-	}
-
-	if request.Id == "" {
-		httpapi.WriteJSONResponse(
-			w,
-			http.StatusBadRequest,
-			map[string]string{
-				"error": "Empty filter is not allowed",
-			},
-		)
-		return
-	}
-
-	patients, err := h.repo.Filter(r.Context(), request)
-	if err != nil {
-		httpapi.WriteJSONResponse(
-			w,
-			http.StatusInternalServerError,
-			map[string]string{
-				"error": "Something went wrong",
-			},
-		)
-		return
-	}
-
-	httpapi.WriteJSONResponse(
-		w,
-		http.StatusOK,
-		map[string]any{
-			"data": patients,
-		},
-	)
-}
-
 func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 	if !isPostRequest(w, r) {
 		return
@@ -77,8 +28,7 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if request.Search.FirstName == "" &&
-		request.Search.LastName == "" {
+	if request.Search.isEmpty() && request.Filter.isEmpty() {
 		httpapi.WriteJSONResponse(
 			w,
 			http.StatusBadRequest,
@@ -89,7 +39,7 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	patients, err := h.repo.Search(r.Context(), request)
+	patients, err := h.repo.FindPatients(r.Context(), request)
 	if err != nil {
 		http.Error(
 			w,

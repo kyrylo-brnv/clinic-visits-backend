@@ -1,14 +1,34 @@
 package patient
 
-import "context"
+import (
+	"context"
+
+	"github.com/smithautotest/clinic-visits/internal/filter"
+)
 
 type PatientSearch struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 }
 
+func (s *PatientSearch) isEmpty() bool {
+	if s == nil {
+		return true
+	}
+
+	return *s == (PatientSearch{})
+}
+
 type PatientFilter struct {
-	Id string `json:"id"`
+	Id *filter.StringFilter `json:"id"`
+}
+
+func (f *PatientFilter) isEmpty() bool {
+	if f == nil {
+		return true
+	}
+
+	return f.Id.IsEmpty()
 }
 
 type PatientSort struct {
@@ -17,18 +37,14 @@ type PatientSort struct {
 }
 
 type PatientSearchRequest struct {
-	Search     PatientSearch `json:"search"`
-	Filter     PatientFilter `json:"filter"`
-	Sort       PatientSort   `json:"sort"`
-	Pagination PatientPagination
-}
-
-type PatientPagination struct {
-	Limit  int
-	Offset int
+	Search *PatientSearch `json:"search"`
+	Filter *PatientFilter `json:"filter"`
+	Sort   *PatientSort   `json:"sort"`
 }
 
 type Repository interface {
-	Search(ctx context.Context, request PatientSearchRequest) ([]Patient, error)
-	Filter(ctx context.Context, request PatientFilter) ([]Patient, error)
+	FindPatients(
+		ctx context.Context,
+		request PatientSearchRequest,
+	) ([]Patient, error)
 }

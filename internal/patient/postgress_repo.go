@@ -18,80 +18,47 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	}
 }
 
-func (r *PostgresRepository) Filter(
-	ctx context.Context,
-	request PatientFilter,
-) ([]Patient, error) {
-	id := request.Id
-
-	rows, err := r.pool.Query(ctx, `
-			SELECT 
-			id::text, 
-			first_name, 
-			last_name, 
-			date_of_birth::text,
-			gender,
-			is_deleted
-		FROM patients 
-		WHERE id = $1
-	`, id)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to filter patients: %w", err)
-	}
-	defer rows.Close()
-
-	patients := make([]Patient, 0)
-
-	for rows.Next() {
-		var row Patient
-
-		err := rows.Scan(
-			&row.ID,
-			&row.FirstName,
-			&row.LastName,
-			&row.DateOfBirth,
-			&row.Gender,
-			&row.IsDeleted,
-		)
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan patients rows")
-		}
-
-		patients = append(patients, row)
-	}
-
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating over rows: %w", rows.Err())
-	}
-	return patients, nil
-}
-
-func (r *PostgresRepository) Search(
+func (r *PostgresRepository) FindPatients(
 	ctx context.Context,
 	request PatientSearchRequest,
 ) ([]Patient, error) {
+	firstName := ""
+	lastName := ""
 
-	firstName := escapeLike(request.Search.FirstName)
-	lastName := escapeLike(request.Search.LastName)
+	if request.Search != nil {
+		firstName = escapeLike(request.Search.FirstName)
+		lastName = escapeLike(request.Search.LastName)
+	}
+
+	var equalsID *string
+	var notEqualsID *string
+
+	if request.Filter != nil && !request.Filter.Id.IsEmpty() {
+		equalsID = request.Filter.Id.Equals
+		notEqualsID = request.Filter.Id.NotEquals
+	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT 
-			id::text, 
-			first_name, 
-			last_name, 
-			date_of_birth::text,
-			gender,
-			is_deleted
-		FROM patients 
-		WHERE is_deleted = false
-			AND ($1 = '' OR first_name ILIKE '%' || $1 || '%')
-			AND ($2 = '' OR last_name ILIKE '%' || $2 || '%')
-		ORDER BY created_at DESC
-	`,
+                SELECT
+                        id::text,
+                        first_name,
+                        last_name,
+                        date_of_birth::text,
+                        gender,
+                        is_deleted
+                FROM patients
+                WHERE is_deleted = false
+                        AND ($1::uuid IS NULL OR id = $1::uuid)
+                        AND ($2::uuid IS NULL OR id <> $2::uuid)
+                        AND ($3 = '' OR first_name ILIKE '%' || $3 || '%')
+                        AND ($4 = '' OR last_name ILIKE '%' || $4 || '%')
+                ORDER BY created_at DESC
+        `,
+		equalsID,
+		notEqualsID,
 		firstName,
-		lastName)
+		lastName,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query patients: %w", err)
 	}
@@ -102,23 +69,22 @@ func (r *PostgresRepository) Search(
 	for rows.Next() {
 		var row Patient
 
-		err := rows.Scan(
+		if err := rows.Scan(
 			&row.ID,
 			&row.FirstName,
 			&row.LastName,
 			&row.DateOfBirth,
 			&row.Gender,
 			&row.IsDeleted,
-		)
-
-		if err != nil {
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan patient: %w", err)
 		}
+
 		patients = append(patients, row)
 	}
 
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating over rows: %w", rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %w", err)
 	}
 
 	return patients, nil
