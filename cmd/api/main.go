@@ -1,20 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/joho/godotenv"
+	"github.com/smithautotest/clinic-visits/internal/app"
 	"github.com/smithautotest/clinic-visits/internal/config"
 	"github.com/smithautotest/clinic-visits/internal/database"
-	"github.com/smithautotest/clinic-visits/internal/patient"
 )
-
-type healthResponse struct {
-	Status string `json:"status"`
-}
 
 func main() {
 	err := godotenv.Load()
@@ -39,29 +34,7 @@ func main() {
 	}
 	defer pool.Close()
 
+	router := app.New(pool)
 	address := ":" + strconv.Itoa(appServerConfig.HTTPPort)
-	// TODO: add router
-	patientRepo := patient.NewPostgresRepository(pool)
-	patientHandler := patient.NewHandler(patientRepo)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/patients", patientHandler.SearchPatients)
-
-	log.Fatal(http.ListenAndServe(address, mux))
-}
-
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	payload, err := json.Marshal(healthResponse{Status: "ok"})
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(payload)
+	log.Fatal(http.ListenAndServe(address, router))
 }

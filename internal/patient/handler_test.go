@@ -9,23 +9,10 @@ import (
 )
 
 type FakeRepository struct {
-	Patients    []Patient
-	LastSearch  PatientSearchRequest
-	LastFilter  PatientFilter
-	FilterError error
-}
-
-func (r *FakeRepository) Filter(
-	ctx context.Context,
-	request PatientFilter,
-) ([]Patient, error) {
-	r.LastFilter = request
-
-	if r.FilterError != nil {
-		return nil, r.FilterError
-	}
-
-	return r.Patients, nil
+	Patients           []Patient
+	LastSearch         PatientSearchRequest
+	FilterError        error
+	FindPatientsCalled bool
 }
 
 func NewFakeRepository() *FakeRepository {
@@ -43,8 +30,13 @@ func NewFakeRepository() *FakeRepository {
 	}
 }
 
-func (r *FakeRepository) Search(ctx context.Context, request PatientSearchRequest) ([]Patient, error) {
+func (r *FakeRepository) FindPatients(
+	ctx context.Context,
+	request PatientSearchRequest,
+) ([]Patient, error) {
+	r.FindPatientsCalled = true
 	r.LastSearch = request
+
 	return r.Patients, nil
 }
 
@@ -87,30 +79,60 @@ func TestSearchPatientsValidResponse(t *testing.T) {
 	}
 }
 
-func TestSearchPatientsEmptySearch(t *testing.T) {
-	repo := NewFakeRepository()
-	handler := NewHandler(repo)
+func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "empty request",
+			body: `{}`,
+		},
+		{
+			name: "empty search",
+			body: `{
+                                "search": {
+                                        "first_name": "",
+                                        "last_name": ""
+                                }
+                        }`,
+		},
+		{
+			name: "empty filter",
+			body: `{"filter": {}}`,
+		},
+		{
+			name: "empty ID filter",
+			body: `{"filter": {"id": {}}}`,
+		},
+	}
 
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/patients",
-		strings.NewReader(`{
-                        "search": {
-                                "first_name": "",
-                                "last_name": ""
-                        }
-                }`),
-	)
-	response := httptest.NewRecorder()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := NewFakeRepository()
+			handler := NewHandler(repo)
 
-	handler.SearchPatients(response, request)
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/patients/search",
+				strings.NewReader(test.body),
+			)
+			response := httptest.NewRecorder()
 
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf(
-			"expected status code %d, got %d",
-			http.StatusBadRequest,
-			response.Code,
-		)
+			handler.SearchPatients(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if repo.FindPatientsCalled {
+				t.Fatal("expected repository not to be called")
+			}
+		})
 	}
 }
 
@@ -158,83 +180,115 @@ func TestSearchPatientsWrongMethod(t *testing.T) {
 	}
 }
 
-func TestFilterPatientsValidResponse(t *testing.T) {
+func TestSearchPatientsWithIDEqualsFilter(t *testing.T) {
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/patients/filter",
-		strings.NewReader(`{"id":"abc123"}`),
+		"/patients/search",
+		strings.NewReader(`{
+                        "filter": {
+                                "id": {
+                                        "equals": "fed95cc1-24c4-4076-af88-591828d6928a"
+                                }
+                        }
+                }`),
 	)
 	response := httptest.NewRecorder()
 
-	handler.FilterPatients(response, request)
+	handler.SearchPatients(response, request)
 
 	if response.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d",
-			http.StatusOK, response.Code)
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
 	}
 
-	if repo.LastFilter.Id != "abc123" {
-		t.Fatalf("expected id %q, got %q",
-			"abc123", repo.LastFilter.Id)
+	if repo.LastSearch.Filter == nil {
+		t.Fatal("expected filter to be forwarded to repository")
+	}
+
+	if repo.LastSearch.Filter.Id == nil {
+		t.Fatal("expected id filter to be forwarded to repository")
+	}
+
+	if repo.LastSearch.Filter.Id.Equals == nil {
+		t.Fatal("expected equals filter to be forwarded to repository")
+	}
+
+	expectedID := "fed95cc1-24c4-4076-af88-591828d6928a"
+
+	if *repo.LastSearch.Filter.Id.Equals != expectedID {
+		t.Fatalf(
+			"expected id %q, got %q",
+			expectedID,
+			*repo.LastSearch.Filter.Id.Equals,
+		)
 	}
 }
 
-func TestFilterPatientsEmptyID(t *testing.T) {
+func TestSearchPatientsWithSearchAndFilter(t *testing.T) {
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/patients/filter",
-		strings.NewReader(`{"id":""}`),
+		"/patients/search",
+		strings.NewReader(`{
+                        "search": {
+                                "first_name": "Ann"
+                        },
+                        "filter": {
+                                "id": {
+                                        "not_equals": "fed95cc1-24c4-4076-af88-591828d6928a"
+                                }
+                        }
+                }`),
 	)
 	response := httptest.NewRecorder()
 
-	handler.FilterPatients(response, request)
+	handler.SearchPatients(response, request)
 
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d",
-			http.StatusBadRequest, response.Code)
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
 	}
-}
 
-func TestFilterPatientsInvalidJSON(t *testing.T) {
-	repo := NewFakeRepository()
-	handler := NewHandler(repo)
-
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/patients/filter",
-		strings.NewReader(`invalid json`),
-	)
-	response := httptest.NewRecorder()
-
-	handler.FilterPatients(response, request)
-
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d",
-			http.StatusBadRequest, response.Code)
+	if !repo.FindPatientsCalled {
+		t.Fatal("expected repository to be called")
 	}
-}
 
-func TestFilterPatientsWrongMethod(t *testing.T) {
-	repo := NewFakeRepository()
-	handler := NewHandler(repo)
+	if repo.LastSearch.Search == nil {
+		t.Fatal("expected search to be forwarded to repository")
+	}
 
-	request := httptest.NewRequest(
-		http.MethodGet,
-		"/patients/filter",
-		nil,
-	)
-	response := httptest.NewRecorder()
+	if repo.LastSearch.Search.FirstName != "Ann" {
+		t.Fatalf(
+			"expected first name %q, got %q",
+			"Ann",
+			repo.LastSearch.Search.FirstName,
+		)
+	}
 
-	handler.FilterPatients(response, request)
+	if repo.LastSearch.Filter == nil ||
+		repo.LastSearch.Filter.Id == nil ||
+		repo.LastSearch.Filter.Id.NotEquals == nil {
+		t.Fatal("expected not_equals filter to be forwarded to repository")
+	}
 
-	if response.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected status %d, got %d",
-			http.StatusMethodNotAllowed, response.Code)
+	expectedID := "fed95cc1-24c4-4076-af88-591828d6928a"
+
+	if *repo.LastSearch.Filter.Id.NotEquals != expectedID {
+		t.Fatalf(
+			"expected ID %q, got %q",
+			expectedID,
+			*repo.LastSearch.Filter.Id.NotEquals,
+		)
 	}
 }
