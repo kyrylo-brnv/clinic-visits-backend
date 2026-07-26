@@ -9,19 +9,19 @@ SELECT
 FROM patients
 WHERE is_deleted = false
     AND (
-        sqlc.narg('equals_id')::uuid IS NULL
-        OR id = sqlc.narg('equals_id')::uuid
+        sqlc.arg('equals_id')::text = ''
+        OR id = NULLIF(sqlc.arg('equals_id')::text, '')::uuid
     )
     AND (
-        sqlc.narg('not_equals_id')::uuid IS NULL
-        OR id <> sqlc.narg('not_equals_id')::uuid
+        sqlc.arg('not_equals_id')::text = ''
+        OR id <> NULLIF(sqlc.arg('not_equals_id')::text, '')::uuid
     )
     AND (
-        sqlc.narg('first_name')::text IS NULL
-        OR first_name ILIKE '%' || sqlc.narg('first_name')::text || '%'
+        sqlc.arg('first_name')::text = ''
+        OR first_name ILIKE '%' || sqlc.arg('first_name')::text || '%'
     )
     AND (
-        sqlc.narg('last_name')::text IS NULL
-        OR last_name ILIKE '%' || sqlc.narg('last_name')::text || '%'
+        sqlc.arg('last_name')::text = ''
+        OR last_name ILIKE '%' || sqlc.arg('last_name')::text || '%'
     )
 ORDER BY created_at DESC;
