@@ -91,11 +91,11 @@ func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
 		{
 			name: "empty search",
 			body: `{
-                                "search": {
-                                        "first_name": "",
-                                        "last_name": ""
-                                }
-                        }`,
+						"search": {
+								"first_name": "",
+								"last_name": ""
+						}
+					}`,
 		},
 		{
 			name: "empty filter",
@@ -104,6 +104,25 @@ func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
 		{
 			name: "empty ID filter",
 			body: `{"filter": {"id": {}}}`,
+		}, {
+			name: "empty equals ID",
+			body: `{
+                "filter": {
+                        "id": {
+                                "equals": ""
+                        }
+                }
+        }`,
+		},
+		{
+			name: "empty not-equals ID",
+			body: `{
+                "filter": {
+                        "id": {
+                                "not_equals": ""
+                        }
+                }
+        }`,
 		},
 	}
 

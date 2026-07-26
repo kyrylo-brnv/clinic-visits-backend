@@ -22,29 +22,29 @@ SELECT
 FROM patients
 WHERE is_deleted = false
     AND (
-        $1::uuid IS NULL
-        OR id = $1::uuid
+        $1::text = ''
+        OR id = NULLIF($1::text, '')::uuid
     )
     AND (
-        $2::uuid IS NULL
-        OR id <> $2::uuid
+        $2::text = ''
+        OR id <> NULLIF($2::text, '')::uuid
     )
     AND (
-        $3::text IS NULL
+        $3::text = ''
         OR first_name ILIKE '%' || $3::text || '%'
     )
     AND (
-        $4::text IS NULL
+        $4::text = ''
         OR last_name ILIKE '%' || $4::text || '%'
     )
 ORDER BY created_at DESC
 `
 
 type FindPatientsParams struct {
-	EqualsID    pgtype.UUID
-	NotEqualsID pgtype.UUID
-	FirstName   pgtype.Text
-	LastName    pgtype.Text
+	EqualsID    string
+	NotEqualsID string
+	FirstName   string
+	LastName    string
 }
 
 type FindPatientsRow struct {

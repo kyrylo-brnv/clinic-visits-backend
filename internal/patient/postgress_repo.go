@@ -6,15 +6,16 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/smithautotest/clinic-visits/internal/database/sqlc"
 )
 
 type PostgresRepository struct {
-	pool *pgxpool.Pool
+	queries *sqlc.Queries
 }
 
 func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{
-		pool: pool,
+		queries: sqlc.New(pool),
 	}
 }
 
@@ -22,69 +23,39 @@ func (r *PostgresRepository) FindPatients(
 	ctx context.Context,
 	request PatientSearchRequest,
 ) ([]Patient, error) {
-	firstName := ""
-	lastName := ""
+	params := sqlc.FindPatientsParams{}
 
-	if request.Search != nil {
-		firstName = escapeLike(request.Search.FirstName)
-		lastName = escapeLike(request.Search.LastName)
+	if !request.Search.isEmpty() {
+		params.FirstName = escapeLike(request.Search.FirstName)
+		params.LastName = escapeLike(request.Search.LastName)
 	}
 
-	var equalsID *string
-	var notEqualsID *string
-
-	if request.Filter != nil && !request.Filter.Id.IsEmpty() {
-		equalsID = request.Filter.Id.Equals
-		notEqualsID = request.Filter.Id.NotEquals
-	}
-
-	rows, err := r.pool.Query(ctx, `
-                SELECT
-                        id::text,
-                        first_name,
-                        last_name,
-                        date_of_birth::text,
-                        gender,
-                        is_deleted
-                FROM patients
-                WHERE is_deleted = false
-                        AND ($1::uuid IS NULL OR id = $1::uuid)
-                        AND ($2::uuid IS NULL OR id <> $2::uuid)
-                        AND ($3 = '' OR first_name ILIKE '%' || $3 || '%')
-                        AND ($4 = '' OR last_name ILIKE '%' || $4 || '%')
-                ORDER BY created_at DESC
-        `,
-		equalsID,
-		notEqualsID,
-		firstName,
-		lastName,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query patients: %w", err)
-	}
-	defer rows.Close()
-
-	patients := make([]Patient, 0)
-
-	for rows.Next() {
-		var row Patient
-
-		if err := rows.Scan(
-			&row.ID,
-			&row.FirstName,
-			&row.LastName,
-			&row.DateOfBirth,
-			&row.Gender,
-			&row.IsDeleted,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan patient: %w", err)
+	if !request.Filter.isEmpty() {
+		if request.Filter.Id.HasEquals() {
+			params.EqualsID = *request.Filter.Id.Equals
 		}
 
-		patients = append(patients, row)
+		if request.Filter.Id.HasNotEquals() {
+			params.NotEqualsID = *request.Filter.Id.NotEquals
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over rows: %w", err)
+	rows, err := r.queries.FindPatients(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to find patients: %w", err)
+	}
+
+	patients := make([]Patient, 0, len(rows))
+
+	for _, row := range rows {
+		patients = append(patients, Patient{
+			ID:          row.ID,
+			FirstName:   row.FirstName,
+			LastName:    row.LastName,
+			DateOfBirth: row.DateOfBirth,
+			Gender:      row.Gender,
+			IsDeleted:   row.IsDeleted.Bool,
+		})
 	}
 
 	return patients, nil

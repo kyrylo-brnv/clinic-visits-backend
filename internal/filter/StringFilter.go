@@ -6,5 +6,24 @@ type StringFilter struct {
 }
 
 func (f *StringFilter) IsEmpty() bool {
-	return f == nil || (f.Equals == nil && f.NotEquals == nil)
+	if f == nil {
+		return true
+	}
+
+	equalsEmpty := f.Equals == nil || *f.Equals == ""
+	notEqualsEmpty := f.NotEquals == nil || *f.NotEquals == ""
+
+	return equalsEmpty && notEqualsEmpty
+}
+
+func (f *StringFilter) HasEquals() bool {
+	return !f.IsEmpty() && f.isValidValue(f.Equals)
+}
+
+func (f *StringFilter) HasNotEquals() bool {
+	return !f.IsEmpty() && f.isValidValue(f.NotEquals)
+}
+
+func (f *StringFilter) isValidValue(value *string) bool {
+	return value != nil && *value != ""
 }
