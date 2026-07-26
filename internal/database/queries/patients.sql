@@ -24,4 +24,46 @@ WHERE is_deleted = false
         sqlc.arg('last_name')::text = ''
         OR last_name ILIKE '%' || sqlc.arg('last_name')::text || '%'
     )
-ORDER BY created_at DESC;
+ORDER BY
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'first_name'
+            AND sqlc.arg('sort_direction')::text = 'asc'
+        THEN first_name
+    END ASC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'first_name'
+            AND sqlc.arg('sort_direction')::text = 'desc'
+        THEN first_name
+    END DESC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'last_name'
+            AND sqlc.arg('sort_direction')::text = 'asc'
+        THEN last_name
+    END ASC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'last_name'
+            AND sqlc.arg('sort_direction')::text = 'desc'
+        THEN last_name
+    END DESC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'date_of_birth'
+            AND sqlc.arg('sort_direction')::text = 'asc'
+        THEN date_of_birth
+    END ASC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'date_of_birth'
+            AND sqlc.arg('sort_direction')::text = 'desc'
+        THEN date_of_birth
+    END DESC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'created_at'
+            AND sqlc.arg('sort_direction')::text = 'asc'
+        THEN created_at
+    END ASC,
+    CASE
+        WHEN sqlc.arg('sort_field')::text = 'created_at'
+            AND sqlc.arg('sort_direction')::text = 'desc'
+        THEN created_at
+    END DESC,
+    created_at DESC,
+    id ASC;

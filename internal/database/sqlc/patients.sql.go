@@ -37,14 +37,58 @@ WHERE is_deleted = false
         $4::text = ''
         OR last_name ILIKE '%' || $4::text || '%'
     )
-ORDER BY created_at DESC
+ORDER BY
+    CASE
+        WHEN $5::text = 'first_name'
+            AND $6::text = 'asc'
+        THEN first_name
+    END ASC,
+    CASE
+        WHEN $5::text = 'first_name'
+            AND $6::text = 'desc'
+        THEN first_name
+    END DESC,
+    CASE
+        WHEN $5::text = 'last_name'
+            AND $6::text = 'asc'
+        THEN last_name
+    END ASC,
+    CASE
+        WHEN $5::text = 'last_name'
+            AND $6::text = 'desc'
+        THEN last_name
+    END DESC,
+    CASE
+        WHEN $5::text = 'date_of_birth'
+            AND $6::text = 'asc'
+        THEN date_of_birth
+    END ASC,
+    CASE
+        WHEN $5::text = 'date_of_birth'
+            AND $6::text = 'desc'
+        THEN date_of_birth
+    END DESC,
+    CASE
+        WHEN $5::text = 'created_at'
+            AND $6::text = 'asc'
+        THEN created_at
+    END ASC,
+    CASE
+        WHEN $5::text = 'created_at'
+            AND $6::text = 'desc'
+        THEN created_at
+    END DESC,
+    created_at DESC,
+    id ASC
 `
 
 type FindPatientsParams struct {
-	EqualsID    string
-	NotEqualsID string
-	FirstName   string
-	LastName    string
+	EqualsID      string
+	NotEqualsID   string
+	FirstName     string
+	LastName      string
+	SortField     string
+	SortDirection string
 }
 
 type FindPatientsRow struct {
@@ -62,6 +106,8 @@ func (q *Queries) FindPatients(ctx context.Context, arg FindPatientsParams) ([]F
 		arg.NotEqualsID,
 		arg.FirstName,
 		arg.LastName,
+		arg.SortField,
+		arg.SortDirection,
 	)
 	if err != nil {
 		return nil, err

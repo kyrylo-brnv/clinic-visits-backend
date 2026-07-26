@@ -40,6 +40,11 @@ func (r *PostgresRepository) FindPatients(
 		}
 	}
 
+	if request.Sort != nil {
+		params.SortField = request.Sort.Field
+		params.SortDirection = string(request.Sort.Direction)
+	}
+
 	rows, err := r.queries.FindPatients(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to find patients: %w", err)

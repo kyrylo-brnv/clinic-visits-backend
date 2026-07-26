@@ -5,11 +5,19 @@ import (
 	"net/http"
 
 	"github.com/smithautotest/clinic-visits/internal/httpapi"
+	"github.com/smithautotest/clinic-visits/internal/sorting"
 )
 
 type Handler struct {
 	repo Repository
 }
+
+var allowedSortingFields = sorting.NewAllowedFields(
+	"first_name",
+	"last_name",
+	"date_of_birth",
+	"created_at",
+)
 
 func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 	if !isPostRequest(w, r) {
@@ -25,6 +33,17 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 			w,
 			"invalid request body",
 			http.StatusBadRequest)
+		return
+	}
+
+	if !allowedSortingFields.IsValid(request.Sort) {
+		httpapi.WriteJSONResponse(
+			w,
+			http.StatusBadRequest,
+			map[string]string{
+				"error": "Invalid sort field or direction",
+			},
+		)
 		return
 	}
 
