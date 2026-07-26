@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/smithautotest/clinic-visits/internal/filter"
+	"github.com/smithautotest/clinic-visits/internal/sorting"
 )
 
 type PatientSearch struct {
@@ -31,15 +32,10 @@ func (f *PatientFilter) isEmpty() bool {
 	return f.Id.IsEmpty()
 }
 
-type PatientSort struct {
-	Field     string `json:"field"`
-	Direction string `json:"direction"`
-}
-
 type PatientSearchRequest struct {
 	Search *PatientSearch `json:"search"`
 	Filter *PatientFilter `json:"filter"`
-	Sort   *PatientSort   `json:"sort"`
+	Sort   *sorting.Sort  `json:"sort"`
 }
 
 type Repository interface {

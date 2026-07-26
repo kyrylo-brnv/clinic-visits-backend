@@ -48,13 +48,13 @@ func TestSearchPatientsValidResponse(t *testing.T) {
 		http.MethodPost,
 		"/patients",
 		strings.NewReader(`
-			{
-				"search": {
-					"first_name": "ann",
-					"last_name": ""
-				}
+		{
+			"search": {
+				"first_name": "ann",
+				"last_name": ""
 			}
-		`))
+		}
+	`))
 	response := httptest.NewRecorder()
 
 	handler.SearchPatients(response, request)
@@ -91,11 +91,11 @@ func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
 		{
 			name: "empty search",
 			body: `{
-						"search": {
-								"first_name": "",
-								"last_name": ""
-						}
-					}`,
+					"search": {
+							"first_name": "",
+							"last_name": ""
+					}
+				}`,
 		},
 		{
 			name: "empty filter",
@@ -107,22 +107,22 @@ func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
 		}, {
 			name: "empty equals ID",
 			body: `{
-                "filter": {
-                        "id": {
-                                "equals": ""
-                        }
-                }
-        }`,
+			"filter": {
+					"id": {
+							"equals": ""
+					}
+			}
+	}`,
 		},
 		{
 			name: "empty not-equals ID",
 			body: `{
-                "filter": {
-                        "id": {
-                                "not_equals": ""
-                        }
-                }
-        }`,
+			"filter": {
+					"id": {
+							"not_equals": ""
+					}
+			}
+	}`,
 		},
 	}
 
@@ -207,12 +207,12 @@ func TestSearchPatientsWithIDEqualsFilter(t *testing.T) {
 		http.MethodPost,
 		"/patients/search",
 		strings.NewReader(`{
-                        "filter": {
-                                "id": {
-                                        "equals": "fed95cc1-24c4-4076-af88-591828d6928a"
-                                }
-                        }
-                }`),
+					"filter": {
+							"id": {
+									"equals": "fed95cc1-24c4-4076-af88-591828d6928a"
+							}
+					}
+			}`),
 	)
 	response := httptest.NewRecorder()
 
@@ -257,15 +257,15 @@ func TestSearchPatientsWithSearchAndFilter(t *testing.T) {
 		http.MethodPost,
 		"/patients/search",
 		strings.NewReader(`{
-                        "search": {
-                                "first_name": "Ann"
-                        },
-                        "filter": {
-                                "id": {
-                                        "not_equals": "fed95cc1-24c4-4076-af88-591828d6928a"
-                                }
-                        }
-                }`),
+					"search": {
+							"first_name": "Ann"
+					},
+					"filter": {
+							"id": {
+									"not_equals": "fed95cc1-24c4-4076-af88-591828d6928a"
+							}
+					}
+			}`),
 	)
 	response := httptest.NewRecorder()
 
@@ -309,5 +309,126 @@ func TestSearchPatientsWithSearchAndFilter(t *testing.T) {
 			expectedID,
 			*repo.LastSearch.Filter.Id.NotEquals,
 		)
+	}
+}
+
+func TestSearchPatientsWithValidSort(t *testing.T) {
+	fields := []string{
+		"first_name",
+		"last_name",
+		"date_of_birth",
+		"created_at",
+	}
+
+	directions := []string{
+		"asc",
+		"desc",
+	}
+
+	for _, field := range fields {
+		for _, direction := range directions {
+			t.Run(field+"_"+direction, func(t *testing.T) {
+				repo := NewFakeRepository()
+				handler := NewHandler(repo)
+
+				body := `{
+                                        "search": {
+                                                "first_name": "Ann"
+                                        },
+                                        "sort": {
+                                                "field": "` + field + `",
+                                                "direction": "` + direction + `"
+                                        }
+                                }`
+
+				request := httptest.NewRequest(
+					http.MethodPost,
+					"/patients/search",
+					strings.NewReader(body),
+				)
+				response := httptest.NewRecorder()
+
+				handler.SearchPatients(response, request)
+
+				if response.Code != http.StatusOK {
+					t.Fatalf(
+						"expected status %d, got %d",
+						http.StatusOK,
+						response.Code,
+					)
+				}
+
+				if repo.LastSearch.Sort == nil {
+					t.Fatal("expected sort to be forwarded to repository")
+				}
+
+				if repo.LastSearch.Sort.Field != field {
+					t.Fatalf(
+						"expected sort field %q, got %q",
+						field,
+						repo.LastSearch.Sort.Field,
+					)
+				}
+
+				actualDirection := string(repo.LastSearch.Sort.Direction)
+
+				if actualDirection != direction {
+					t.Fatalf(
+						"expected sort direction %q, got %q",
+						direction,
+						actualDirection,
+					)
+				}
+			})
+		}
+	}
+}
+
+func TestSearchPatientsRejectsInvalidSort(t *testing.T) {
+	tests := []struct {
+		name string
+		sort string
+	}{
+		{
+			name: "unsupported field",
+			sort: `{"field": "unknown", "direction": "asc"}`,
+		},
+		{
+			name: "unsupported direction",
+			sort: `{"field": "first_name", "direction": "up"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := NewFakeRepository()
+			handler := NewHandler(repo)
+
+			body := `{
+                                "search": {"first_name": "Ann"},
+                                "sort": ` + test.sort + `
+                        }`
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/patients/search",
+				strings.NewReader(body),
+			)
+			response := httptest.NewRecorder()
+
+			handler.SearchPatients(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if repo.FindPatientsCalled {
+				t.Fatal("expected repository not to be called")
+			}
+		})
 	}
 }
