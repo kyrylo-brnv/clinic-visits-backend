@@ -2,6 +2,8 @@ package patient
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/smithautotest/clinic-visits/internal/httpapi"
@@ -28,11 +30,13 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 
 	decoder := decodeRequestBody(r)
 
-	if err := decoder.Decode(&request); err != nil {
+	if err := decoder.Decode(&request); err != nil &&
+		!errors.Is(err, io.EOF) {
 		http.Error(
 			w,
 			"invalid request body",
-			http.StatusBadRequest)
+			http.StatusBadRequest,
+		)
 		return
 	}
 
@@ -47,17 +51,17 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if request.Search.isEmpty() && request.Filter.isEmpty() {
+	if (request.Search != nil && request.Search.isEmpty()) ||
+		(request.Filter != nil && request.Filter.isEmpty()) {
 		httpapi.WriteJSONResponse(
 			w,
 			http.StatusBadRequest,
 			map[string]string{
-				"error": "At least 1 searchable field is required",
+				"error": "Provided search or filter must contain at least one criterion",
 			},
 		)
 		return
 	}
-
 	patients, err := h.repo.FindPatients(r.Context(), request)
 	if err != nil {
 		http.Error(
