@@ -79,6 +79,32 @@ func TestSearchPatientsValidResponse(t *testing.T) {
 	}
 }
 
+func TestSearchPatientsAllowsEmptyBody(t *testing.T) {
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/search",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.SearchPatients(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !repo.FindPatientsCalled {
+		t.Fatal("expected repository to be called")
+	}
+}
+
 func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
 	tests := []struct {
 		name string
