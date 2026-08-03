@@ -1,0 +1,7 @@
+CREATE TABLE doctors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    specialty_id UUID NOT NULL REFERENCES specialties(id),
+    full_name VARCHAR(200) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
