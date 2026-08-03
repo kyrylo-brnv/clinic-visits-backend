@@ -23,7 +23,10 @@ func (r *PostgresRepository) FindPatients(
 	ctx context.Context,
 	request PatientSearchRequest,
 ) ([]Patient, error) {
-	params := sqlc.FindPatientsParams{}
+	params := sqlc.FindPatientsParams{
+		PageLimit:  request.Pagination.Limit(),
+		PageOffset: request.Pagination.Offset(),
+	}
 
 	if !request.Search.isEmpty() {
 		params.FirstName = escapeLike(request.Search.FirstName)

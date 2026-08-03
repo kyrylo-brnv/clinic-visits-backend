@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/smithautotest/clinic-visits/internal/filter"
+	"github.com/smithautotest/clinic-visits/internal/pagination"
 	"github.com/smithautotest/clinic-visits/internal/sorting"
 )
 
@@ -33,9 +34,10 @@ func (f *PatientFilter) isEmpty() bool {
 }
 
 type PatientSearchRequest struct {
-	Search *PatientSearch `json:"search"`
-	Filter *PatientFilter `json:"filter"`
-	Sort   *sorting.Sort  `json:"sort"`
+	Search     *PatientSearch    `json:"search"`
+	Filter     *PatientFilter    `json:"filter"`
+	Sort       *sorting.Sort     `json:"sort"`
+	Pagination pagination.Params `json:"-"`
 }
 
 type Repository interface {

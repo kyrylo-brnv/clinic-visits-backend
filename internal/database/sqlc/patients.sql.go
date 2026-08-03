@@ -80,6 +80,8 @@ ORDER BY
     END DESC,
     created_at DESC,
     id ASC
+LIMIT $8::int
+OFFSET $7::bigint
 `
 
 type FindPatientsParams struct {
@@ -89,6 +91,8 @@ type FindPatientsParams struct {
 	LastName      string
 	SortField     string
 	SortDirection string
+	PageOffset    int64
+	PageLimit     int32
 }
 
 type FindPatientsRow struct {
@@ -108,6 +112,8 @@ func (q *Queries) FindPatients(ctx context.Context, arg FindPatientsParams) ([]F
 		arg.LastName,
 		arg.SortField,
 		arg.SortDirection,
+		arg.PageOffset,
+		arg.PageLimit,
 	)
 	if err != nil {
 		return nil, err

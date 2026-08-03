@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/smithautotest/clinic-visits/internal/httpapi"
+	"github.com/smithautotest/clinic-visits/internal/pagination"
 	"github.com/smithautotest/clinic-visits/internal/sorting"
 )
 
@@ -30,8 +31,7 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 
 	decoder := decodeRequestBody(r)
 
-	if err := decoder.Decode(&request); err != nil &&
-		!errors.Is(err, io.EOF) {
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
 		http.Error(
 			w,
 			"invalid request body",
@@ -39,6 +39,19 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
+	paginationParams, err := pagination.Parse(r.URL.Query())
+	if err != nil {
+		httpapi.WriteJSONResponse(
+			w,
+			http.StatusBadRequest,
+			map[string]string{
+				"error": err.Error(),
+			},
+		)
+		return
+	}
+	request.Pagination = paginationParams
 
 	if !allowedSortingFields.IsValid(request.Sort) {
 		httpapi.WriteJSONResponse(
