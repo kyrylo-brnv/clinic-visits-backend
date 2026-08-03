@@ -8,6 +8,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Clinic struct {
+	ID        pgtype.UUID
+	Name      string
+	Address   string
+	TimeZone  string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Doctor struct {
 	ID          pgtype.UUID
 	SpecialtyID pgtype.UUID
