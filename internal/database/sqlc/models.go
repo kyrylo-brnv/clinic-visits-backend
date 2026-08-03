@@ -23,6 +23,7 @@ type Doctor struct {
 	FullName    string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+	ClinicID    pgtype.UUID
 }
 
 type Patient struct {
