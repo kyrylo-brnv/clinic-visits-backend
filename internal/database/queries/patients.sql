@@ -66,4 +66,6 @@ ORDER BY
         THEN created_at
     END DESC,
     created_at DESC,
-    id ASC;
+    id ASC
+LIMIT sqlc.arg('page_limit')::int
+OFFSET sqlc.arg('page_offset')::bigint;

@@ -41,6 +41,7 @@ func (r *FakeRepository) FindPatients(
 }
 
 func TestSearchPatientsValidResponse(t *testing.T) {
+	t.Parallel()
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
@@ -80,6 +81,7 @@ func TestSearchPatientsValidResponse(t *testing.T) {
 }
 
 func TestSearchPatientsAllowsEmptyBody(t *testing.T) {
+	t.Parallel()
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
@@ -106,14 +108,11 @@ func TestSearchPatientsAllowsEmptyBody(t *testing.T) {
 }
 
 func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
 	}{
-		{
-			name: "empty request",
-			body: `{}`,
-		},
 		{
 			name: "empty search",
 			body: `{
@@ -181,6 +180,33 @@ func TestSearchPatientsRejectsEmptyCriteria(t *testing.T) {
 	}
 }
 
+func TestSearchPatientsAllowsEmptyRequest(t *testing.T) {
+	t.Parallel()
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/search",
+		strings.NewReader(`{}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.SearchPatients(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !repo.FindPatientsCalled {
+		t.Fatal("expected repository to be called")
+	}
+}
+
 func TestSearchPatientsInvalidJSON(t *testing.T) {
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
@@ -204,6 +230,7 @@ func TestSearchPatientsInvalidJSON(t *testing.T) {
 }
 
 func TestSearchPatientsWrongMethod(t *testing.T) {
+	t.Parallel()
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
@@ -226,6 +253,7 @@ func TestSearchPatientsWrongMethod(t *testing.T) {
 }
 
 func TestSearchPatientsWithIDEqualsFilter(t *testing.T) {
+	t.Parallel()
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
@@ -276,6 +304,7 @@ func TestSearchPatientsWithIDEqualsFilter(t *testing.T) {
 }
 
 func TestSearchPatientsWithSearchAndFilter(t *testing.T) {
+	t.Parallel()
 	repo := NewFakeRepository()
 	handler := NewHandler(repo)
 
@@ -339,6 +368,7 @@ func TestSearchPatientsWithSearchAndFilter(t *testing.T) {
 }
 
 func TestSearchPatientsWithValidSort(t *testing.T) {
+	t.Parallel()
 	fields := []string{
 		"first_name",
 		"last_name",
@@ -411,6 +441,7 @@ func TestSearchPatientsWithValidSort(t *testing.T) {
 }
 
 func TestSearchPatientsRejectsInvalidSort(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		sort string
@@ -456,5 +487,89 @@ func TestSearchPatientsRejectsInvalidSort(t *testing.T) {
 				t.Fatal("expected repository not to be called")
 			}
 		})
+	}
+}
+
+func TestSearchPatientsForwardsPagination(t *testing.T) {
+	t.Parallel()
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/search?page=3&per_page=50",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.SearchPatients(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if repo.LastSearch.Pagination.Page() != 3 {
+		t.Fatalf(
+			"expected page 3, got %d",
+			repo.LastSearch.Pagination.Page(),
+		)
+	}
+
+	if repo.LastSearch.Pagination.PerPage() != 50 {
+		t.Fatalf(
+			"expected per_page 50, got %d",
+			repo.LastSearch.Pagination.PerPage(),
+		)
+	}
+}
+
+func TestSearchPatientsInvalidPage(t *testing.T) {
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/search?page=0",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.SearchPatients(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+}
+
+func TestSearchPatientsInvalidPerPage(t *testing.T) {
+	t.Parallel()
+	repo := NewFakeRepository()
+	handler := NewHandler(repo)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/patients/search?per_page=201",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.SearchPatients(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
 	}
 }
