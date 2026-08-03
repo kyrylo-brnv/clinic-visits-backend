@@ -44,3 +44,14 @@ type Specialty struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 }
+
+type Visit struct {
+	ID             pgtype.UUID
+	DoctorID       pgtype.UUID
+	PatientID      pgtype.UUID
+	ClinicID       pgtype.UUID
+	VisitStartTime pgtype.Timestamptz
+	VisitEndTime   pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
