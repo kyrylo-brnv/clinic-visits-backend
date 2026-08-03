@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Doctor struct {
+	ID          pgtype.UUID
+	SpecialtyID pgtype.UUID
+	FullName    string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Patient struct {
 	ID          pgtype.UUID
 	FirstName   string
@@ -18,4 +26,11 @@ type Patient struct {
 	UpdatedAt   pgtype.Timestamptz
 	IsDeleted   pgtype.Bool
 	DeletedAt   pgtype.Timestamptz
+}
+
+type Specialty struct {
+	ID        pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
