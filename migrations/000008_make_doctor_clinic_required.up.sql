@@ -1,0 +1,2 @@
+ALTER TABLE doctors
+ALTER COLUMN clinic_id SET NOT NULL;

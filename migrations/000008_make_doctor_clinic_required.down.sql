@@ -1,0 +1,2 @@
+ALTER TABLE doctors
+ALTER COLUMN clinic_id DROP NOT NULL;
