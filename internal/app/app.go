@@ -10,6 +10,7 @@ import (
 func New(pool *pgxpool.Pool) http.Handler {
 	deps := routes.Dependencies{
 		Patients: newPatientHandler(pool),
+		Doctors:  newDoctorHandler(pool),
 	}
 
 	return routes.NewRouter(deps)
