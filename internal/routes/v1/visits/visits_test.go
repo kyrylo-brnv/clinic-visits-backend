@@ -27,6 +27,13 @@ func (fakeRepository) CreateVisit(
 	}, nil
 }
 
+func (fakeRepository) ListVisits(
+	context.Context,
+	visit.ListVisitsRequest,
+) ([]visit.Visit, error) {
+	return []visit.Visit{}, nil
+}
+
 func TestRegisterCreateVisit(t *testing.T) {
 	mux := http.NewServeMux()
 	handler := visit.NewHandler(fakeRepository{})
@@ -52,6 +59,30 @@ func TestRegisterCreateVisit(t *testing.T) {
 		t.Fatalf(
 			"expected status %d, got %d",
 			http.StatusCreated,
+			response.Code,
+		)
+	}
+}
+
+func TestRegisterListVisits(t *testing.T) {
+	mux := http.NewServeMux()
+	handler := visit.NewHandler(fakeRepository{})
+
+	Register(mux, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/visits/list?page=2&per_page=10",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
 			response.Code,
 		)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/smithautotest/clinic-visits/internal/httpapi"
+	"github.com/smithautotest/clinic-visits/internal/pagination"
 	"github.com/smithautotest/clinic-visits/internal/uuid"
 )
 
@@ -63,6 +64,30 @@ func (h Handler) CreateVisit(w http.ResponseWriter, r *http.Request) {
 
 	httpapi.WriteJSONResponse(w, http.StatusCreated, map[string]any{
 		"data": createdVisit,
+	})
+}
+
+func (h Handler) ListVisits(w http.ResponseWriter, r *http.Request) {
+	if !httpapi.RequireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	paginationParams, err := pagination.Parse(r.URL.Query())
+	if err != nil {
+		httpapi.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	visits, err := h.repo.ListVisits(r.Context(), ListVisitsRequest{
+		Pagination: paginationParams,
+	})
+	if err != nil {
+		httpapi.WriteJSONError(w, http.StatusInternalServerError, "failed to list visits")
+		return
+	}
+
+	httpapi.WriteJSONResponse(w, http.StatusOK, map[string]any{
+		"data": visits,
 	})
 }
 

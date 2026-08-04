@@ -62,6 +62,35 @@ func (r *PostgresRepository) CreateVisit(
 	}, nil
 }
 
+func (r *PostgresRepository) ListVisits(
+	ctx context.Context,
+	request ListVisitsRequest,
+) ([]Visit, error) {
+	rows, err := r.queries.ListVisits(ctx, sqlc.ListVisitsParams{
+		PageLimit:  request.Pagination.Limit(),
+		PageOffset: request.Pagination.Offset(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list visits: %w", err)
+	}
+
+	visits := make([]Visit, 0, len(rows))
+	for _, row := range rows {
+		visits = append(visits, Visit{
+			ID:             row.ID,
+			DoctorID:       row.DoctorID,
+			PatientID:      row.PatientID,
+			ClinicID:       row.ClinicID,
+			VisitStartTime: row.VisitStartTime.Time,
+			VisitEndTime:   row.VisitEndTime.Time,
+			CreatedAt:      row.CreatedAt.Time,
+			UpdatedAt:      row.UpdatedAt.Time,
+		})
+	}
+
+	return visits, nil
+}
+
 func mapCreateVisitError(err error) error {
 	var postgresError *pgconn.PgError
 	if errors.As(err, &postgresError) {
