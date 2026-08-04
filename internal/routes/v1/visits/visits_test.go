@@ -34,6 +34,20 @@ func (fakeRepository) ListVisits(
 	return []visit.Visit{}, nil
 }
 
+func (fakeRepository) DeleteVisit(
+	context.Context,
+	visit.DeleteVisitRequest,
+) error {
+	return nil
+}
+
+func (fakeRepository) UpdateVisit(
+	context.Context,
+	visit.UpdateVisitRequest,
+) (visit.Visit, error) {
+	return visit.Visit{ID: "44444444-4444-4444-8444-444444444444"}, nil
+}
+
 func TestRegisterCreateVisit(t *testing.T) {
 	mux := http.NewServeMux()
 	handler := visit.NewHandler(fakeRepository{})
@@ -85,5 +99,70 @@ func TestRegisterListVisits(t *testing.T) {
 			http.StatusOK,
 			response.Code,
 		)
+	}
+}
+
+func TestRegisterDeleteVisit(t *testing.T) {
+	mux := http.NewServeMux()
+	handler := visit.NewHandler(fakeRepository{})
+
+	Register(mux, handler)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/v1/visits/delete",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444"}`),
+	)
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, response.Code)
+	}
+}
+
+func TestRegisterUpdateVisit(t *testing.T) {
+	mux := http.NewServeMux()
+	handler := visit.NewHandler(fakeRepository{})
+
+	Register(mux, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/visits/update",
+		strings.NewReader(`{
+			"visit_id":"44444444-4444-4444-8444-444444444444",
+			"visit_end_time":"2026-08-05T11:00:00Z"
+		}`),
+	)
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+}
+
+func TestRegisterVisitsRejectsWrongMethods(t *testing.T) {
+	mux := http.NewServeMux()
+	handler := visit.NewHandler(fakeRepository{})
+
+	Register(mux, handler)
+
+	tests := []string{
+		"/v1/visits/delete",
+		"/v1/visits/update",
+	}
+	for _, path := range tests {
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		response := httptest.NewRecorder()
+
+		mux.ServeHTTP(response, request)
+
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected %s to reject POST with status %d, got %d", path, http.StatusMethodNotAllowed, response.Code)
+		}
 	}
 }

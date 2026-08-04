@@ -78,6 +78,19 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (Creat
 	return i, err
 }
 
+const deleteVisit = `-- name: DeleteVisit :one
+DELETE FROM visits
+WHERE id = $1
+RETURNING id::text
+`
+
+func (q *Queries) DeleteVisit(ctx context.Context, visitID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, deleteVisit, visitID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listVisits = `-- name: ListVisits :many
 SELECT
     id::text AS id,
@@ -137,4 +150,68 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateVisit = `-- name: UpdateVisit :one
+UPDATE visits
+SET
+    doctor_id = COALESCE($1, doctor_id),
+    patient_id = COALESCE($2, patient_id),
+    clinic_id = COALESCE($3, clinic_id),
+    visit_start_time = COALESCE($4, visit_start_time),
+    visit_end_time = COALESCE($5, visit_end_time),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = $6
+RETURNING
+    id::text AS id,
+    doctor_id::text AS doctor_id,
+    patient_id::text AS patient_id,
+    clinic_id::text AS clinic_id,
+    visit_start_time,
+    visit_end_time,
+    created_at,
+    updated_at
+`
+
+type UpdateVisitParams struct {
+	DoctorID       pgtype.UUID
+	PatientID      pgtype.UUID
+	ClinicID       pgtype.UUID
+	VisitStartTime pgtype.Timestamptz
+	VisitEndTime   pgtype.Timestamptz
+	VisitID        pgtype.UUID
+}
+
+type UpdateVisitRow struct {
+	ID             string
+	DoctorID       string
+	PatientID      string
+	ClinicID       string
+	VisitStartTime pgtype.Timestamptz
+	VisitEndTime   pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateVisit(ctx context.Context, arg UpdateVisitParams) (UpdateVisitRow, error) {
+	row := q.db.QueryRow(ctx, updateVisit,
+		arg.DoctorID,
+		arg.PatientID,
+		arg.ClinicID,
+		arg.VisitStartTime,
+		arg.VisitEndTime,
+		arg.VisitID,
+	)
+	var i UpdateVisitRow
+	err := row.Scan(
+		&i.ID,
+		&i.DoctorID,
+		&i.PatientID,
+		&i.ClinicID,
+		&i.VisitStartTime,
+		&i.VisitEndTime,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

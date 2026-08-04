@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,6 +93,95 @@ func (r *PostgresRepository) ListVisits(
 	return visits, nil
 }
 
+func (r *PostgresRepository) DeleteVisit(
+	ctx context.Context,
+	request DeleteVisitRequest,
+) error {
+	visitID, err := uuid.Parse(request.VisitID)
+	if err != nil {
+		return fmt.Errorf("invalid visit ID: %w", err)
+	}
+
+	if _, err := r.queries.DeleteVisit(ctx, visitID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrVisitNotFound
+		}
+
+		return fmt.Errorf("failed to delete visit: %w", err)
+	}
+
+	return nil
+}
+
+func (r *PostgresRepository) UpdateVisit(
+	ctx context.Context,
+	request UpdateVisitRequest,
+) (Visit, error) {
+	visitID, err := uuid.Parse(request.VisitID)
+	if err != nil {
+		return Visit{}, fmt.Errorf("invalid visit ID: %w", err)
+	}
+
+	doctorID, err := parseOptionalUUID(request.DoctorID, "doctor")
+	if err != nil {
+		return Visit{}, err
+	}
+
+	patientID, err := parseOptionalUUID(request.PatientID, "patient")
+	if err != nil {
+		return Visit{}, err
+	}
+
+	clinicID, err := parseOptionalUUID(request.ClinicID, "clinic")
+	if err != nil {
+		return Visit{}, err
+	}
+
+	row, err := r.queries.UpdateVisit(ctx, sqlc.UpdateVisitParams{
+		VisitID:        visitID,
+		DoctorID:       doctorID,
+		PatientID:      patientID,
+		ClinicID:       clinicID,
+		VisitStartTime: optionalTimestamp(request.VisitStartTime),
+		VisitEndTime:   optionalTimestamp(request.VisitEndTime),
+	})
+	if err != nil {
+		return Visit{}, mapUpdateVisitError(err)
+	}
+
+	return Visit{
+		ID:             row.ID,
+		DoctorID:       row.DoctorID,
+		PatientID:      row.PatientID,
+		ClinicID:       row.ClinicID,
+		VisitStartTime: row.VisitStartTime.Time,
+		VisitEndTime:   row.VisitEndTime.Time,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}, nil
+}
+
+func parseOptionalUUID(value *string, fieldName string) (pgtype.UUID, error) {
+	if value == nil {
+		return pgtype.UUID{}, nil
+	}
+
+	id, err := uuid.Parse(*value)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("invalid %s ID: %w", fieldName, err)
+	}
+
+	return id, nil
+}
+
+func optionalTimestamp(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+
+	return pgtype.Timestamptz{Time: *value, Valid: true}
+}
+
 func mapCreateVisitError(err error) error {
 	var postgresError *pgconn.PgError
 	if errors.As(err, &postgresError) {
@@ -111,7 +202,56 @@ func mapCreateVisitError(err error) error {
 			postgresError.ConstraintName == "visits_valid_time_range" {
 			return ErrInvalidTimeRange
 		}
+
+		if postgresError.Code == "23P01" &&
+			postgresError.ConstraintName == "visits_doctor_time_exclusion" {
+			return ErrVisitTimeConflict
+		}
+
+		if postgresError.Code == "23P01" &&
+			postgresError.ConstraintName == "visits_patient_time_exclusion" {
+			return ErrPatientTimeConflict
+		}
 	}
 
 	return fmt.Errorf("failed to create visit: %w", err)
+}
+
+func mapUpdateVisitError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrVisitNotFound
+	}
+
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) {
+		if postgresError.Code == "23503" {
+			switch postgresError.ConstraintName {
+			case "visits_doctor_id_fkey":
+				return ErrDoctorNotFound
+			case "visits_patient_id_fkey":
+				return ErrPatientNotFound
+			case "visits_clinic_id_fkey":
+				return ErrClinicNotFound
+			case "visits_doctor_clinic_fkey":
+				return ErrDoctorClinicMismatch
+			}
+		}
+
+		if postgresError.Code == "23514" &&
+			postgresError.ConstraintName == "visits_valid_time_range" {
+			return ErrInvalidTimeRange
+		}
+
+		if postgresError.Code == "23P01" &&
+			postgresError.ConstraintName == "visits_doctor_time_exclusion" {
+			return ErrVisitTimeConflict
+		}
+
+		if postgresError.Code == "23P01" &&
+			postgresError.ConstraintName == "visits_patient_time_exclusion" {
+			return ErrPatientTimeConflict
+		}
+	}
+
+	return fmt.Errorf("failed to update visit: %w", err)
 }

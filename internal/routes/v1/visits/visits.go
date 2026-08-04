@@ -15,4 +15,12 @@ func Register(mux *http.ServeMux, handler visit.Handler) {
 		"POST /v1/visits/list",
 		handler.ListVisits,
 	)
+	mux.HandleFunc(
+		"DELETE /v1/visits/delete",
+		handler.DeleteVisit,
+	)
+	mux.HandleFunc(
+		"PATCH /v1/visits/update",
+		handler.UpdateVisit,
+	)
 }
