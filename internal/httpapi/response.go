@@ -17,6 +17,12 @@ func WriteJSONResponse(w http.ResponseWriter, statusCode int, data any) {
 	w.Write(jsonData)
 }
 
+func WriteJSONError(w http.ResponseWriter, statusCode int, message string) {
+	WriteJSONResponse(w, statusCode, map[string]string{
+		"error": message,
+	})
+}
+
 func RequireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 	if r.Method != method {
 		w.Header().Set("Allow", method)
