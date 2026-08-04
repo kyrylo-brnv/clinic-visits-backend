@@ -19,6 +19,15 @@ const validCreateVisitBody = `{
 	"visit_end_time": "2026-08-05T10:00:00Z"
 }`
 
+const validDeleteVisitBody = `{
+	"visit_id": "44444444-4444-4444-8444-444444444444"
+}`
+
+const validUpdateVisitBody = `{
+	"visit_id": "44444444-4444-4444-8444-444444444444",
+	"visit_end_time": "2026-08-05T11:00:00Z"
+}`
+
 type fakeRepository struct {
 	createdVisit    Visit
 	err             error
@@ -28,6 +37,13 @@ type fakeRepository struct {
 	listErr         error
 	lastListRequest ListVisitsRequest
 	listCalled      bool
+	deleteErr       error
+	lastDelete      DeleteVisitRequest
+	deleteCalled    bool
+	updatedVisit    Visit
+	updateErr       error
+	lastUpdate      UpdateVisitRequest
+	updateCalled    bool
 }
 
 func (r *fakeRepository) CreateVisit(
@@ -46,6 +62,24 @@ func (r *fakeRepository) ListVisits(
 	r.listCalled = true
 	r.lastListRequest = request
 	return r.listedVisits, r.listErr
+}
+
+func (r *fakeRepository) DeleteVisit(
+	_ context.Context,
+	request DeleteVisitRequest,
+) error {
+	r.deleteCalled = true
+	r.lastDelete = request
+	return r.deleteErr
+}
+
+func (r *fakeRepository) UpdateVisit(
+	_ context.Context,
+	request UpdateVisitRequest,
+) (Visit, error) {
+	r.updateCalled = true
+	r.lastUpdate = request
+	return r.updatedVisit, r.updateErr
 }
 
 func TestCreateVisitReturnsCreatedVisit(t *testing.T) {
@@ -153,6 +187,8 @@ func TestCreateVisitMapsRepositoryErrors(t *testing.T) {
 		{name: "clinic not found", err: ErrClinicNotFound, status: http.StatusNotFound},
 		{name: "doctor clinic mismatch", err: ErrDoctorClinicMismatch, status: http.StatusBadRequest},
 		{name: "invalid time range", err: ErrInvalidTimeRange, status: http.StatusBadRequest},
+		{name: "visit time conflict", err: ErrVisitTimeConflict, status: http.StatusConflict},
+		{name: "patient time conflict", err: ErrPatientTimeConflict, status: http.StatusConflict},
 		{name: "database error", err: errors.New("database unavailable"), status: http.StatusInternalServerError},
 	}
 
@@ -387,5 +423,268 @@ func TestListVisitsRejectsWrongMethod(t *testing.T) {
 	}
 	if repo.listCalled {
 		t.Fatal("expected repository not to be called")
+	}
+}
+
+func TestDeleteVisitReturnsNoContent(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepository{}
+	handler := NewHandler(repo)
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/v1/visits/delete",
+		strings.NewReader(validDeleteVisitBody),
+	)
+	response := httptest.NewRecorder()
+
+	handler.DeleteVisit(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, response.Code)
+	}
+	if !repo.deleteCalled || repo.lastDelete.VisitID != "44444444-4444-4444-8444-444444444444" {
+		t.Fatalf("expected delete request to be forwarded, got %+v", repo.lastDelete)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("expected an empty response body, got %q", response.Body.String())
+	}
+}
+
+func TestDeleteVisitRejectsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "invalid JSON", body: `{`},
+		{name: "unknown field", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","unknown":true}`},
+		{name: "multiple objects", body: validDeleteVisitBody + `{}`},
+		{name: "missing visit ID", body: `{}`},
+		{name: "invalid visit ID", body: `{"visit_id":"invalid"}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &fakeRepository{}
+			handler := NewHandler(repo)
+			request := httptest.NewRequest(http.MethodDelete, "/v1/visits/delete", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+
+			handler.DeleteVisit(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+			}
+			if repo.deleteCalled {
+				t.Fatal("expected repository not to be called")
+			}
+		})
+	}
+}
+
+func TestDeleteVisitMapsRepositoryErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "visit not found", err: ErrVisitNotFound, status: http.StatusNotFound},
+		{name: "database error", err: errors.New("database unavailable"), status: http.StatusInternalServerError},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &fakeRepository{deleteErr: test.err}
+			handler := NewHandler(repo)
+			request := httptest.NewRequest(http.MethodDelete, "/v1/visits/delete", strings.NewReader(validDeleteVisitBody))
+			response := httptest.NewRecorder()
+
+			handler.DeleteVisit(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("expected status %d, got %d", test.status, response.Code)
+			}
+		})
+	}
+}
+
+func TestUpdateVisitReturnsUpdatedVisitAndPreservesOmittedFields(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepository{updatedVisit: Visit{
+		ID:           "44444444-4444-4444-8444-444444444444",
+		DoctorID:     "11111111-1111-4111-8111-111111111111",
+		PatientID:    "22222222-2222-4222-8222-222222222222",
+		ClinicID:     "33333333-3333-4333-8333-333333333333",
+		VisitEndTime: time.Date(2026, time.August, 5, 11, 0, 0, 0, time.UTC),
+	}}
+	handler := NewHandler(repo)
+	request := httptest.NewRequest(http.MethodPatch, "/v1/visits/update", strings.NewReader(validUpdateVisitBody))
+	response := httptest.NewRecorder()
+
+	handler.UpdateVisit(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if !repo.updateCalled {
+		t.Fatal("expected repository to be called")
+	}
+	if repo.lastUpdate.VisitEndTime == nil || !repo.lastUpdate.VisitEndTime.Equal(repo.updatedVisit.VisitEndTime) {
+		t.Fatalf("expected visit end time to be forwarded, got %+v", repo.lastUpdate.VisitEndTime)
+	}
+	if repo.lastUpdate.DoctorID != nil || repo.lastUpdate.PatientID != nil || repo.lastUpdate.ClinicID != nil || repo.lastUpdate.VisitStartTime != nil {
+		t.Fatalf("expected omitted fields to stay nil, got %+v", repo.lastUpdate)
+	}
+
+	var body struct {
+		Data Visit `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Data.ID != repo.updatedVisit.ID {
+		t.Fatalf("expected visit ID %q, got %q", repo.updatedVisit.ID, body.Data.ID)
+	}
+}
+
+func TestUpdateVisitRejectsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "invalid JSON", body: `{`},
+		{name: "unknown field", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","unknown":true}`},
+		{name: "multiple objects", body: validUpdateVisitBody + `{}`},
+		{name: "missing visit ID", body: `{"doctor_id":"11111111-1111-4111-8111-111111111111"}`},
+		{name: "invalid visit ID", body: `{"visit_id":"invalid","doctor_id":"11111111-1111-4111-8111-111111111111"}`},
+		{name: "invalid related ID", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","doctor_id":"invalid"}`},
+		{name: "null mutable field", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","doctor_id":null,"patient_id":"22222222-2222-4222-8222-222222222222"}`},
+		{name: "no changes", body: `{"visit_id":"44444444-4444-4444-8444-444444444444"}`},
+		{name: "invalid time range", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","visit_start_time":"2026-08-05T11:00:00Z","visit_end_time":"2026-08-05T10:00:00Z"}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &fakeRepository{}
+			handler := NewHandler(repo)
+			request := httptest.NewRequest(http.MethodPatch, "/v1/visits/update", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+
+			handler.UpdateVisit(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+			}
+			if repo.updateCalled {
+				t.Fatal("expected repository not to be called")
+			}
+		})
+	}
+}
+
+func TestUpdateVisitMapsRepositoryErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "visit not found", err: ErrVisitNotFound, status: http.StatusNotFound},
+		{name: "doctor not found", err: ErrDoctorNotFound, status: http.StatusNotFound},
+		{name: "patient not found", err: ErrPatientNotFound, status: http.StatusNotFound},
+		{name: "clinic not found", err: ErrClinicNotFound, status: http.StatusNotFound},
+		{name: "doctor clinic mismatch", err: ErrDoctorClinicMismatch, status: http.StatusBadRequest},
+		{name: "invalid final time range", err: ErrInvalidTimeRange, status: http.StatusBadRequest},
+		{name: "visit time conflict", err: ErrVisitTimeConflict, status: http.StatusConflict},
+		{name: "patient time conflict", err: ErrPatientTimeConflict, status: http.StatusConflict},
+		{name: "database error", err: errors.New("database unavailable"), status: http.StatusInternalServerError},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &fakeRepository{updateErr: test.err}
+			handler := NewHandler(repo)
+			request := httptest.NewRequest(http.MethodPatch, "/v1/visits/update", strings.NewReader(validUpdateVisitBody))
+			response := httptest.NewRecorder()
+
+			handler.UpdateVisit(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("expected status %d, got %d", test.status, response.Code)
+			}
+		})
+	}
+}
+
+func TestPatientTimeConflictUsesSpecificMessage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "create",
+			method: http.MethodPost,
+			path:   "/v1/visits/create",
+			body:   validCreateVisitBody,
+		},
+		{
+			name:   "update",
+			method: http.MethodPatch,
+			path:   "/v1/visits/update",
+			body:   validUpdateVisitBody,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &fakeRepository{
+				err:       ErrPatientTimeConflict,
+				updateErr: ErrPatientTimeConflict,
+			}
+			handler := NewHandler(repo)
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+
+			if test.method == http.MethodPost {
+				handler.CreateVisit(response, request)
+			} else {
+				handler.UpdateVisit(response, request)
+			}
+
+			if response.Code != http.StatusConflict {
+				t.Fatalf("expected status %d, got %d", http.StatusConflict, response.Code)
+			}
+			var responseBody struct {
+				Error string `json:"error"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&responseBody); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if responseBody.Error != ErrPatientTimeConflict.Error() {
+				t.Fatalf("expected message %q, got %q", ErrPatientTimeConflict, responseBody.Error)
+			}
+		})
 	}
 }

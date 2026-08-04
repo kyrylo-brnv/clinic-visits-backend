@@ -97,6 +97,358 @@ func TestCreateVisitRejectsDoctorFromAnotherClinic(t *testing.T) {
 	}
 }
 
+func TestVisitTimeConflictValidation(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	doctorID, firstPatientID, secondPatientID, clinicID := createVisitScheduleFixtures(t, transaction)
+	repository := &PostgresRepository{queries: sqlc.New(transaction)}
+	startTime := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
+
+	firstVisit, err := repository.CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       doctorID.String(),
+		PatientID:      firstPatientID.String(),
+		ClinicID:       clinicID.String(),
+		VisitStartTime: startTime,
+		VisitEndTime:   startTime.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create first visit: %v", err)
+	}
+
+	conflicts := []struct {
+		name  string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			name:  "exact overlap",
+			start: startTime,
+			end:   startTime.Add(time.Hour),
+		},
+		{
+			name:  "partial overlap",
+			start: startTime.Add(30 * time.Minute),
+			end:   startTime.Add(90 * time.Minute),
+		},
+		{
+			name:  "contained overlap",
+			start: startTime.Add(15 * time.Minute),
+			end:   startTime.Add(45 * time.Minute),
+		},
+	}
+
+	for _, test := range conflicts {
+		t.Run(test.name, func(t *testing.T) {
+			savepoint, err := transaction.Begin(ctx)
+			if err != nil {
+				t.Fatalf("create savepoint: %v", err)
+			}
+
+			conflictRepository := &PostgresRepository{queries: sqlc.New(savepoint)}
+			_, createErr := conflictRepository.CreateVisit(ctx, CreateVisitRequest{
+				DoctorID:       doctorID.String(),
+				PatientID:      secondPatientID.String(),
+				ClinicID:       clinicID.String(),
+				VisitStartTime: test.start,
+				VisitEndTime:   test.end,
+			})
+			if err := savepoint.Rollback(ctx); err != nil {
+				t.Fatalf("rollback conflict savepoint: %v", err)
+			}
+
+			if !errors.Is(createErr, ErrVisitTimeConflict) {
+				t.Fatalf("expected %v, got %v", ErrVisitTimeConflict, createErr)
+			}
+		})
+	}
+
+	adjacentVisit, err := repository.CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       doctorID.String(),
+		PatientID:      secondPatientID.String(),
+		ClinicID:       clinicID.String(),
+		VisitStartTime: startTime.Add(time.Hour),
+		VisitEndTime:   startTime.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("expected adjacent visit to be allowed: %v", err)
+	}
+
+	conflictingStart := startTime.Add(30 * time.Minute)
+	conflictingEnd := startTime.Add(90 * time.Minute)
+	updateSavepoint, err := transaction.Begin(ctx)
+	if err != nil {
+		t.Fatalf("create update savepoint: %v", err)
+	}
+	conflictRepository := &PostgresRepository{queries: sqlc.New(updateSavepoint)}
+	_, updateErr := conflictRepository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:        adjacentVisit.ID,
+		VisitStartTime: &conflictingStart,
+		VisitEndTime:   &conflictingEnd,
+	})
+	if err := updateSavepoint.Rollback(ctx); err != nil {
+		t.Fatalf("rollback update savepoint: %v", err)
+	}
+	if !errors.Is(updateErr, ErrVisitTimeConflict) {
+		t.Fatalf("expected %v for overlapping update, got %v", ErrVisitTimeConflict, updateErr)
+	}
+
+	safeStart := startTime.Add(-30 * time.Minute)
+	updatedVisit, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:        firstVisit.ID,
+		VisitStartTime: &safeStart,
+	})
+	if err != nil {
+		t.Fatalf("expected visit update without self-overlap to be allowed: %v", err)
+	}
+	if !updatedVisit.VisitStartTime.Equal(safeStart) {
+		t.Fatalf("expected updated start time %v, got %v", safeStart, updatedVisit.VisitStartTime)
+	}
+}
+
+func TestPatientTimeConflictValidation(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	firstDoctorID, firstClinicID, secondDoctorID, secondClinicID, patientID :=
+		createPatientScheduleFixtures(t, transaction)
+	repository := &PostgresRepository{queries: sqlc.New(transaction)}
+	startTime := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Microsecond)
+
+	firstVisit, err := repository.CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       firstDoctorID.String(),
+		PatientID:      patientID.String(),
+		ClinicID:       firstClinicID.String(),
+		VisitStartTime: startTime,
+		VisitEndTime:   startTime.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create first patient visit: %v", err)
+	}
+
+	createSavepoint, err := transaction.Begin(ctx)
+	if err != nil {
+		t.Fatalf("create overlapping visit savepoint: %v", err)
+	}
+	conflictRepository := &PostgresRepository{queries: sqlc.New(createSavepoint)}
+	_, createErr := conflictRepository.CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       secondDoctorID.String(),
+		PatientID:      patientID.String(),
+		ClinicID:       secondClinicID.String(),
+		VisitStartTime: startTime.Add(30 * time.Minute),
+		VisitEndTime:   startTime.Add(90 * time.Minute),
+	})
+	if err := createSavepoint.Rollback(ctx); err != nil {
+		t.Fatalf("rollback overlapping visit savepoint: %v", err)
+	}
+	if !errors.Is(createErr, ErrPatientTimeConflict) {
+		t.Fatalf("expected %v for overlapping patient create, got %v", ErrPatientTimeConflict, createErr)
+	}
+
+	adjacentVisit, err := repository.CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       secondDoctorID.String(),
+		PatientID:      patientID.String(),
+		ClinicID:       secondClinicID.String(),
+		VisitStartTime: startTime.Add(time.Hour),
+		VisitEndTime:   startTime.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("expected adjacent patient visit to be allowed: %v", err)
+	}
+
+	conflictingStart := startTime.Add(30 * time.Minute)
+	conflictingEnd := startTime.Add(90 * time.Minute)
+	updateSavepoint, err := transaction.Begin(ctx)
+	if err != nil {
+		t.Fatalf("create overlapping update savepoint: %v", err)
+	}
+	conflictRepository = &PostgresRepository{queries: sqlc.New(updateSavepoint)}
+	_, updateErr := conflictRepository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:        adjacentVisit.ID,
+		VisitStartTime: &conflictingStart,
+		VisitEndTime:   &conflictingEnd,
+	})
+	if err := updateSavepoint.Rollback(ctx); err != nil {
+		t.Fatalf("rollback overlapping update savepoint: %v", err)
+	}
+	if !errors.Is(updateErr, ErrPatientTimeConflict) {
+		t.Fatalf("expected %v for overlapping patient update, got %v", ErrPatientTimeConflict, updateErr)
+	}
+
+	safeStart := startTime.Add(-30 * time.Minute)
+	updatedVisit, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:        firstVisit.ID,
+		VisitStartTime: &safeStart,
+	})
+	if err != nil {
+		t.Fatalf("expected non-overlapping patient update to be allowed: %v", err)
+	}
+	if !updatedVisit.VisitStartTime.Equal(safeStart) {
+		t.Fatalf("expected updated start time %v, got %v", safeStart, updatedVisit.VisitStartTime)
+	}
+}
+
+func TestUpdateAndDeleteVisit(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	var specialtyID pgtype.UUID
+	err = transaction.QueryRow(
+		ctx,
+		"INSERT INTO specialties (name) VALUES ($1) RETURNING id",
+		"Update Delete Test Specialty",
+	).Scan(&specialtyID)
+	if err != nil {
+		t.Fatalf("create specialty fixture: %v", err)
+	}
+
+	clinicID := createClinicFixture(t, transaction, "Update Delete Clinic")
+	otherClinicID := createClinicFixture(t, transaction, "Update Delete Other Clinic")
+
+	var doctorID pgtype.UUID
+	err = transaction.QueryRow(
+		ctx,
+		`INSERT INTO doctors (specialty_id, clinic_id, full_name)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`,
+		specialtyID,
+		clinicID,
+		"Update Delete Test Doctor",
+	).Scan(&doctorID)
+	if err != nil {
+		t.Fatalf("create doctor fixture: %v", err)
+	}
+
+	var patientID pgtype.UUID
+	err = transaction.QueryRow(
+		ctx,
+		`INSERT INTO patients (first_name, last_name, date_of_birth, gender)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		"Update",
+		"Patient",
+		"1990-01-01",
+		"other",
+	).Scan(&patientID)
+	if err != nil {
+		t.Fatalf("create patient fixture: %v", err)
+	}
+
+	startTime := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	created, err := sqlc.New(transaction).CreateVisit(ctx, sqlc.CreateVisitParams{
+		DoctorID:       doctorID,
+		PatientID:      patientID,
+		ClinicID:       clinicID,
+		VisitStartTime: pgtype.Timestamptz{Time: startTime, Valid: true},
+		VisitEndTime:   pgtype.Timestamptz{Time: startTime.Add(time.Hour), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create visit fixture: %v", err)
+	}
+
+	repository := &PostgresRepository{queries: sqlc.New(transaction)}
+	newEndTime := startTime.Add(2 * time.Hour)
+	updated, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:      created.ID,
+		VisitEndTime: &newEndTime,
+	})
+	if err != nil {
+		t.Fatalf("update visit: %v", err)
+	}
+	if updated.DoctorID != doctorID.String() || updated.PatientID != patientID.String() || updated.ClinicID != clinicID.String() {
+		t.Fatalf("expected omitted relationships to be preserved, got %+v", updated)
+	}
+	if !updated.VisitStartTime.Equal(startTime) || !updated.VisitEndTime.Equal(newEndTime) {
+		t.Fatalf("expected partial time update, got start %v end %v", updated.VisitStartTime, updated.VisitEndTime)
+	}
+
+	invalidStartTime := newEndTime.Add(time.Hour)
+	invalidTimeTransaction, err := transaction.Begin(ctx)
+	if err != nil {
+		t.Fatalf("create invalid time range savepoint: %v", err)
+	}
+	invalidTimeRepository := &PostgresRepository{queries: sqlc.New(invalidTimeTransaction)}
+	_, updateErr := invalidTimeRepository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:        created.ID,
+		VisitStartTime: &invalidStartTime,
+	})
+	if err := invalidTimeTransaction.Rollback(ctx); err != nil {
+		t.Fatalf("rollback invalid time range savepoint: %v", err)
+	}
+	if !errors.Is(updateErr, ErrInvalidTimeRange) {
+		t.Fatalf("expected %v for invalid final range, got %v", ErrInvalidTimeRange, updateErr)
+	}
+
+	otherClinic := otherClinicID.String()
+	mismatchTransaction, err := transaction.Begin(ctx)
+	if err != nil {
+		t.Fatalf("create doctor-clinic mismatch savepoint: %v", err)
+	}
+	mismatchRepository := &PostgresRepository{queries: sqlc.New(mismatchTransaction)}
+	_, updateErr = mismatchRepository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:  created.ID,
+		ClinicID: &otherClinic,
+	})
+	if err := mismatchTransaction.Rollback(ctx); err != nil {
+		t.Fatalf("rollback doctor-clinic mismatch savepoint: %v", err)
+	}
+	if !errors.Is(updateErr, ErrDoctorClinicMismatch) {
+		t.Fatalf("expected %v, got %v", ErrDoctorClinicMismatch, updateErr)
+	}
+
+	if err := repository.DeleteVisit(ctx, DeleteVisitRequest{VisitID: created.ID}); err != nil {
+		t.Fatalf("delete visit: %v", err)
+	}
+	if err := repository.DeleteVisit(ctx, DeleteVisitRequest{VisitID: created.ID}); !errors.Is(err, ErrVisitNotFound) {
+		t.Fatalf("expected %v after deleting visit, got %v", ErrVisitNotFound, err)
+	}
+}
+
 func createClinicFixture(
 	t *testing.T,
 	transaction pgx.Tx,
@@ -119,4 +471,128 @@ func createClinicFixture(
 	}
 
 	return clinicID
+}
+
+func createVisitScheduleFixtures(
+	t *testing.T,
+	transaction pgx.Tx,
+) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID) {
+	t.Helper()
+
+	ctx := t.Context()
+	var specialtyID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		"INSERT INTO specialties (name) VALUES ($1) RETURNING id",
+		"Visit Schedule Validation Specialty",
+	).Scan(&specialtyID); err != nil {
+		t.Fatalf("create specialty fixture: %v", err)
+	}
+
+	clinicID := createClinicFixture(t, transaction, "Visit Schedule Validation Clinic")
+
+	var doctorID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		`INSERT INTO doctors (specialty_id, clinic_id, full_name)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`,
+		specialtyID,
+		clinicID,
+		"Visit Schedule Validation Doctor",
+	).Scan(&doctorID); err != nil {
+		t.Fatalf("create doctor fixture: %v", err)
+	}
+
+	var firstPatientID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		`INSERT INTO patients (first_name, last_name, date_of_birth, gender)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		"Schedule",
+		"Patient",
+		"1990-01-01",
+		"other",
+	).Scan(&firstPatientID); err != nil {
+		t.Fatalf("create patient fixture: %v", err)
+	}
+
+	var secondPatientID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		`INSERT INTO patients (first_name, last_name, date_of_birth, gender)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		"Other Schedule",
+		"Patient",
+		"1991-01-01",
+		"other",
+	).Scan(&secondPatientID); err != nil {
+		t.Fatalf("create second patient fixture: %v", err)
+	}
+
+	return doctorID, firstPatientID, secondPatientID, clinicID
+}
+
+func createPatientScheduleFixtures(
+	t *testing.T,
+	transaction pgx.Tx,
+) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID) {
+	t.Helper()
+
+	ctx := t.Context()
+	var specialtyID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		"INSERT INTO specialties (name) VALUES ($1) RETURNING id",
+		"Patient Schedule Validation Specialty",
+	).Scan(&specialtyID); err != nil {
+		t.Fatalf("create specialty fixture: %v", err)
+	}
+
+	firstClinicID := createClinicFixture(t, transaction, "Patient Schedule First Clinic")
+	secondClinicID := createClinicFixture(t, transaction, "Patient Schedule Second Clinic")
+
+	var firstDoctorID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		`INSERT INTO doctors (specialty_id, clinic_id, full_name)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`,
+		specialtyID,
+		firstClinicID,
+		"Patient Schedule First Doctor",
+	).Scan(&firstDoctorID); err != nil {
+		t.Fatalf("create first doctor fixture: %v", err)
+	}
+
+	var secondDoctorID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		`INSERT INTO doctors (specialty_id, clinic_id, full_name)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`,
+		specialtyID,
+		secondClinicID,
+		"Patient Schedule Second Doctor",
+	).Scan(&secondDoctorID); err != nil {
+		t.Fatalf("create second doctor fixture: %v", err)
+	}
+
+	var patientID pgtype.UUID
+	if err := transaction.QueryRow(
+		ctx,
+		`INSERT INTO patients (first_name, last_name, date_of_birth, gender)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		"Patient Schedule",
+		"Conflict",
+		"1990-01-01",
+		"other",
+	).Scan(&patientID); err != nil {
+		t.Fatalf("create patient fixture: %v", err)
+	}
+
+	return firstDoctorID, firstClinicID, secondDoctorID, secondClinicID, patientID
 }
