@@ -1,14 +1,13 @@
 package doctor
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/smithautotest/clinic-visits/internal/httpapi"
+	"github.com/smithautotest/clinic-visits/internal/uuid"
 )
 
 type Handler struct {
@@ -74,24 +73,7 @@ func hasInvalidUUIDFilter(filter *DoctorFilter) bool {
 		return false
 	}
 
-	return !isValidOptionalUUID(filter.DoctorID) ||
-		!isValidOptionalUUID(filter.VisitID) ||
-		!isValidOptionalUUID(filter.ClinicID)
-}
-
-func isValidOptionalUUID(value string) bool {
-	if value == "" {
-		return true
-	}
-
-	if len(value) != 36 ||
-		value[8] != '-' ||
-		value[13] != '-' ||
-		value[18] != '-' ||
-		value[23] != '-' {
-		return false
-	}
-
-	_, err := hex.DecodeString(strings.ReplaceAll(value, "-", ""))
-	return err == nil
+	return !uuid.IsValidOptional(filter.DoctorID) ||
+		!uuid.IsValidOptional(filter.VisitID) ||
+		!uuid.IsValidOptional(filter.ClinicID)
 }
