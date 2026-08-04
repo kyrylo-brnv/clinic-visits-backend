@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/smithautotest/clinic-visits/internal/pagination"
 )
 
 var (
@@ -22,6 +24,11 @@ type CreateVisitRequest struct {
 	VisitEndTime   time.Time `json:"visit_end_time"`
 }
 
+type ListVisitsRequest struct {
+	Pagination pagination.Params
+}
+
 type Repository interface {
 	CreateVisit(ctx context.Context, request CreateVisitRequest) (Visit, error)
+	ListVisits(ctx context.Context, request ListVisitsRequest) ([]Visit, error)
 }

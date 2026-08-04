@@ -11,4 +11,8 @@ func Register(mux *http.ServeMux, handler visit.Handler) {
 		"POST /v1/visits/create",
 		handler.CreateVisit,
 	)
+	mux.HandleFunc(
+		"POST /v1/visits/list",
+		handler.ListVisits,
+	)
 }

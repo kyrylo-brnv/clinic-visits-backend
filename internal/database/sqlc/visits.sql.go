@@ -77,3 +77,64 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (Creat
 	)
 	return i, err
 }
+
+const listVisits = `-- name: ListVisits :many
+SELECT
+    id::text AS id,
+    doctor_id::text AS doctor_id,
+    patient_id::text AS patient_id,
+    clinic_id::text AS clinic_id,
+    visit_start_time,
+    visit_end_time,
+    created_at,
+    updated_at
+FROM visits
+ORDER BY visit_start_time ASC, id ASC
+LIMIT $2::int
+OFFSET $1::bigint
+`
+
+type ListVisitsParams struct {
+	PageOffset int64
+	PageLimit  int32
+}
+
+type ListVisitsRow struct {
+	ID             string
+	DoctorID       string
+	PatientID      string
+	ClinicID       string
+	VisitStartTime pgtype.Timestamptz
+	VisitEndTime   pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListVisitsRow, error) {
+	rows, err := q.db.Query(ctx, listVisits, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVisitsRow
+	for rows.Next() {
+		var i ListVisitsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DoctorID,
+			&i.PatientID,
+			&i.ClinicID,
+			&i.VisitStartTime,
+			&i.VisitEndTime,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
