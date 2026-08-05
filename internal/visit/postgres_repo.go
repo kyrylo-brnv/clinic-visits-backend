@@ -146,6 +146,7 @@ func (r *PostgresRepository) UpdateVisit(
 		ClinicID:       clinicID,
 		VisitStartTime: optionalTimestamp(request.VisitStartTime),
 		VisitEndTime:   optionalTimestamp(request.VisitEndTime),
+		Status:         optionalText(request.Status),
 	})
 	if err != nil {
 		return Visit{}, mapUpdateVisitError(err)
@@ -183,6 +184,14 @@ func optionalTimestamp(value *time.Time) pgtype.Timestamptz {
 	}
 
 	return pgtype.Timestamptz{Time: *value, Valid: true}
+}
+
+func optionalText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+
+	return pgtype.Text{String: *value, Valid: true}
 }
 
 func mapCreateVisitError(err error) error {

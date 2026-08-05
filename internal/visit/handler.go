@@ -24,6 +24,7 @@ type updateVisitBody struct {
 	ClinicID       optionalField[string]    `json:"clinic_id"`
 	VisitStartTime optionalField[time.Time] `json:"visit_start_time"`
 	VisitEndTime   optionalField[time.Time] `json:"visit_end_time"`
+	Status         optionalField[string]    `json:"status"`
 }
 
 type optionalField[T any] struct {
@@ -172,6 +173,7 @@ func (h Handler) UpdateVisit(w http.ResponseWriter, r *http.Request) {
 		ClinicID:       body.ClinicID.pointer(),
 		VisitStartTime: body.VisitStartTime.pointer(),
 		VisitEndTime:   body.VisitEndTime.pointer(),
+		Status:         body.Status.pointer(),
 	}
 
 	if !uuid.IsValid(request.VisitID) ||
@@ -179,6 +181,11 @@ func (h Handler) UpdateVisit(w http.ResponseWriter, r *http.Request) {
 		(request.PatientID != nil && !uuid.IsValid(*request.PatientID)) ||
 		(request.ClinicID != nil && !uuid.IsValid(*request.ClinicID)) {
 		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid UUID")
+		return
+	}
+
+	if request.Status != nil && !IsValidStatus(*request.Status) {
+		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid visit status")
 		return
 	}
 

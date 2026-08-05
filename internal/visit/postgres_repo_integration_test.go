@@ -548,8 +548,23 @@ func TestUpdateAndDeleteVisit(t *testing.T) {
 	}
 
 	repository := &PostgresRepository{queries: sqlc.New(transaction)}
-	newEndTime := startTime.Add(2 * time.Hour)
+	newStatus := StatusClosed
 	updated, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID: created.ID,
+		Status:  &newStatus,
+	})
+	if err != nil {
+		t.Fatalf("update visit status: %v", err)
+	}
+	if updated.Status != newStatus {
+		t.Fatalf("expected status %q after status-only update, got %q", newStatus, updated.Status)
+	}
+	if updated.DoctorID != doctorID.String() || updated.PatientID != patientID.String() || updated.ClinicID != clinicID.String() {
+		t.Fatalf("expected status-only update to preserve relationships, got %+v", updated)
+	}
+
+	newEndTime := startTime.Add(2 * time.Hour)
+	updated, err = repository.UpdateVisit(ctx, UpdateVisitRequest{
 		VisitID:      created.ID,
 		VisitEndTime: &newEndTime,
 	})
@@ -561,6 +576,9 @@ func TestUpdateAndDeleteVisit(t *testing.T) {
 	}
 	if !updated.VisitStartTime.Equal(startTime) || !updated.VisitEndTime.Equal(newEndTime) {
 		t.Fatalf("expected partial time update, got start %v end %v", updated.VisitStartTime, updated.VisitEndTime)
+	}
+	if updated.Status != newStatus {
+		t.Fatalf("expected time-only update to preserve status %q, got %q", newStatus, updated.Status)
 	}
 
 	invalidStartTime := newEndTime.Add(time.Hour)

@@ -7,6 +7,22 @@ import (
 
 const visitJSONTimeLayout = "2006-01-02T15:04:05.000000-07:00"
 
+const (
+	StatusScheduled  = "SCHEDULED"
+	StatusInProgress = "IN_PROGRESS"
+	StatusClosed     = "CLOSED"
+	StatusCanceled   = "CANCELED"
+)
+
+func IsValidStatus(status string) bool {
+	switch status {
+	case StatusScheduled, StatusInProgress, StatusClosed, StatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
 type Visit struct {
 	ID             string    `json:"id"`
 	DoctorID       string    `json:"doctor_id"`

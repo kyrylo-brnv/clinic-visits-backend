@@ -6,6 +6,27 @@ import (
 	"time"
 )
 
+func TestIsValidStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []string{
+		StatusScheduled,
+		StatusInProgress,
+		StatusClosed,
+		StatusCanceled,
+	} {
+		if !IsValidStatus(status) {
+			t.Errorf("expected status %q to be valid", status)
+		}
+	}
+
+	for _, status := range []string{"", "CLOSED ", "cancelled", "UNKNOWN"} {
+		if IsValidStatus(status) {
+			t.Errorf("expected status %q to be invalid", status)
+		}
+	}
+}
+
 func TestVisitMarshalJSONUsesFixedMicrosecondTimestamps(t *testing.T) {
 	t.Parallel()
 

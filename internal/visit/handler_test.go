@@ -568,6 +568,44 @@ func TestUpdateVisitReturnsUpdatedVisitAndPreservesOmittedFields(t *testing.T) {
 	}
 }
 
+func TestUpdateVisitChangesStatus(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepository{updatedVisit: Visit{
+		ID:     "44444444-4444-4444-8444-444444444444",
+		Status: StatusClosed,
+	}}
+	handler := NewHandler(repo)
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/visits/update",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444","status":"CLOSED"}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.UpdateVisit(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if repo.lastUpdate.Status == nil || *repo.lastUpdate.Status != StatusClosed {
+		t.Fatalf("expected status %q to be forwarded, got %+v", StatusClosed, repo.lastUpdate.Status)
+	}
+	if repo.lastUpdate.DoctorID != nil || repo.lastUpdate.PatientID != nil || repo.lastUpdate.ClinicID != nil || repo.lastUpdate.VisitStartTime != nil || repo.lastUpdate.VisitEndTime != nil {
+		t.Fatalf("expected status-only update, got %+v", repo.lastUpdate)
+	}
+
+	var body struct {
+		Data Visit `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Data.Status != StatusClosed {
+		t.Fatalf("expected response status %q, got %q", StatusClosed, body.Data.Status)
+	}
+}
+
 func TestUpdateVisitRejectsInvalidRequest(t *testing.T) {
 	t.Parallel()
 
@@ -582,6 +620,8 @@ func TestUpdateVisitRejectsInvalidRequest(t *testing.T) {
 		{name: "invalid visit ID", body: `{"visit_id":"invalid","doctor_id":"11111111-1111-4111-8111-111111111111"}`},
 		{name: "invalid related ID", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","doctor_id":"invalid"}`},
 		{name: "null mutable field", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","doctor_id":null,"patient_id":"22222222-2222-4222-8222-222222222222"}`},
+		{name: "null status", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","status":null}`},
+		{name: "unsupported status", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","status":"UNKNOWN"}`},
 		{name: "no changes", body: `{"visit_id":"44444444-4444-4444-8444-444444444444"}`},
 		{name: "invalid time range", body: `{"visit_id":"44444444-4444-4444-8444-444444444444","visit_start_time":"2026-08-05T11:00:00Z","visit_end_time":"2026-08-05T10:00:00Z"}`},
 	}

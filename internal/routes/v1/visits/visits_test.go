@@ -45,7 +45,10 @@ func (fakeRepository) UpdateVisit(
 	context.Context,
 	visit.UpdateVisitRequest,
 ) (visit.Visit, error) {
-	return visit.Visit{ID: "44444444-4444-4444-8444-444444444444"}, nil
+	return visit.Visit{
+		ID:     "44444444-4444-4444-8444-444444444444",
+		Status: visit.StatusClosed,
+	}, nil
 }
 
 func TestRegisterCreateVisit(t *testing.T) {
@@ -133,7 +136,7 @@ func TestRegisterUpdateVisit(t *testing.T) {
 		"/v1/visits/update",
 		strings.NewReader(`{
 			"visit_id":"44444444-4444-4444-8444-444444444444",
-			"visit_end_time":"2026-08-05T11:00:00Z"
+			"status":"CLOSED"
 		}`),
 	)
 	response := httptest.NewRecorder()
@@ -142,6 +145,9 @@ func TestRegisterUpdateVisit(t *testing.T) {
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"status":"CLOSED"`) {
+		t.Fatalf("expected response to include updated status, got %s", response.Body.String())
 	}
 }
 
