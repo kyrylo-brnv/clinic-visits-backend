@@ -12,6 +12,7 @@ type Visit struct {
 	DoctorID       string    `json:"doctor_id"`
 	PatientID      string    `json:"patient_id"`
 	ClinicID       string    `json:"clinic_id"`
+	Status         string    `json:"status"`
 	VisitStartTime time.Time `json:"visit_start_time"`
 	VisitEndTime   time.Time `json:"visit_end_time"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -24,6 +25,7 @@ func (visit Visit) MarshalJSON() ([]byte, error) {
 		DoctorID       string `json:"doctor_id"`
 		PatientID      string `json:"patient_id"`
 		ClinicID       string `json:"clinic_id"`
+		Status         string `json:"status"`
 		VisitStartTime string `json:"visit_start_time"`
 		VisitEndTime   string `json:"visit_end_time"`
 		CreatedAt      string `json:"created_at"`
@@ -35,6 +37,7 @@ func (visit Visit) MarshalJSON() ([]byte, error) {
 		DoctorID:       visit.DoctorID,
 		PatientID:      visit.PatientID,
 		ClinicID:       visit.ClinicID,
+		Status:         visit.Status,
 		VisitStartTime: formatVisitJSONTime(visit.VisitStartTime),
 		VisitEndTime:   formatVisitJSONTime(visit.VisitEndTime),
 		CreatedAt:      formatVisitJSONTime(visit.CreatedAt),

@@ -15,6 +15,7 @@ func TestVisitMarshalJSONUsesFixedMicrosecondTimestamps(t *testing.T) {
 		DoctorID:       "11111111-1111-4111-8111-111111111111",
 		PatientID:      "22222222-2222-4222-8222-222222222222",
 		ClinicID:       "33333333-3333-4333-8333-333333333333",
+		Status:         "SCHEDULED",
 		VisitStartTime: time.Date(2026, time.August, 4, 18, 37, 1, 4_990_000, location),
 		VisitEndTime:   time.Date(2026, time.August, 4, 19, 37, 1, 120_000_000, location),
 		CreatedAt:      time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC),
@@ -36,6 +37,7 @@ func TestVisitMarshalJSONUsesFixedMicrosecondTimestamps(t *testing.T) {
 		"doctor_id",
 		"patient_id",
 		"clinic_id",
+		"status",
 		"visit_start_time",
 		"visit_end_time",
 		"created_at",
@@ -73,7 +75,8 @@ func TestVisitMarshalJSONUsesFixedMicrosecondTimestamps(t *testing.T) {
 	if decoded.ID != visit.ID ||
 		decoded.DoctorID != visit.DoctorID ||
 		decoded.PatientID != visit.PatientID ||
-		decoded.ClinicID != visit.ClinicID {
+		decoded.ClinicID != visit.ClinicID ||
+		decoded.Status != visit.Status {
 		t.Fatalf("non-time values changed after JSON round trip: %+v", decoded)
 	}
 

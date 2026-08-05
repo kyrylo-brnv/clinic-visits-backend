@@ -97,6 +97,162 @@ func TestCreateVisitRejectsDoctorFromAnotherClinic(t *testing.T) {
 	}
 }
 
+func TestVisitStatusDatabaseValidation(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	doctorID, patientID, _, clinicID := createVisitScheduleFixtures(t, transaction)
+	startTime := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Microsecond)
+
+	var defaultStatus string
+	err = transaction.QueryRow(
+		ctx,
+		`INSERT INTO visits (
+			doctor_id,
+			patient_id,
+			clinic_id,
+			visit_start_time,
+			visit_end_time
+		 ) VALUES ($1, $2, $3, $4, $5)
+		 RETURNING status`,
+		doctorID,
+		patientID,
+		clinicID,
+		startTime,
+		startTime.Add(time.Hour),
+	).Scan(&defaultStatus)
+	if err != nil {
+		t.Fatalf("insert visit with default status: %v", err)
+	}
+	if defaultStatus != "SCHEDULED" {
+		t.Fatalf("expected default status %q, got %q", "SCHEDULED", defaultStatus)
+	}
+
+	validStatuses := []string{"SCHEDULED", "IN_PROGRESS", "CLOSED", "CANCELED"}
+	for index, status := range validStatuses {
+		t.Run("accepts "+status, func(t *testing.T) {
+			visitStart := startTime.Add(time.Duration(index+1) * 2 * time.Hour)
+			var persistedStatus string
+			err := transaction.QueryRow(
+				ctx,
+				`INSERT INTO visits (
+					doctor_id,
+					patient_id,
+					clinic_id,
+					visit_start_time,
+					visit_end_time,
+					status
+				 ) VALUES ($1, $2, $3, $4, $5, $6)
+				 RETURNING status`,
+				doctorID,
+				patientID,
+				clinicID,
+				visitStart,
+				visitStart.Add(time.Hour),
+				status,
+			).Scan(&persistedStatus)
+			if err != nil {
+				t.Fatalf("insert visit with status %q: %v", status, err)
+			}
+			if persistedStatus != status {
+				t.Fatalf("expected persisted status %q, got %q", status, persistedStatus)
+			}
+		})
+	}
+
+	t.Run("rejects unsupported status", func(t *testing.T) {
+		savepoint, err := transaction.Begin(ctx)
+		if err != nil {
+			t.Fatalf("create unsupported status savepoint: %v", err)
+		}
+
+		visitStart := startTime.Add(10 * time.Hour)
+		_, insertErr := savepoint.Exec(
+			ctx,
+			`INSERT INTO visits (
+				doctor_id,
+				patient_id,
+				clinic_id,
+				visit_start_time,
+				visit_end_time,
+				status
+			 ) VALUES ($1, $2, $3, $4, $5, $6)`,
+			doctorID,
+			patientID,
+			clinicID,
+			visitStart,
+			visitStart.Add(time.Hour),
+			"CREATED",
+		)
+		if err := savepoint.Rollback(ctx); err != nil {
+			t.Fatalf("rollback unsupported status savepoint: %v", err)
+		}
+
+		var postgresError *pgconn.PgError
+		if !errors.As(insertErr, &postgresError) {
+			t.Fatalf("expected PostgreSQL constraint error, got %v", insertErr)
+		}
+		if postgresError.ConstraintName != "visits_status_check" {
+			t.Fatalf("expected constraint %q, got %q", "visits_status_check", postgresError.ConstraintName)
+		}
+	})
+
+	t.Run("rejects null status", func(t *testing.T) {
+		savepoint, err := transaction.Begin(ctx)
+		if err != nil {
+			t.Fatalf("create null status savepoint: %v", err)
+		}
+
+		visitStart := startTime.Add(12 * time.Hour)
+		_, insertErr := savepoint.Exec(
+			ctx,
+			`INSERT INTO visits (
+				doctor_id,
+				patient_id,
+				clinic_id,
+				visit_start_time,
+				visit_end_time,
+				status
+			 ) VALUES ($1, $2, $3, $4, $5, NULL)`,
+			doctorID,
+			patientID,
+			clinicID,
+			visitStart,
+			visitStart.Add(time.Hour),
+		)
+		if err := savepoint.Rollback(ctx); err != nil {
+			t.Fatalf("rollback null status savepoint: %v", err)
+		}
+
+		var postgresError *pgconn.PgError
+		if !errors.As(insertErr, &postgresError) {
+			t.Fatalf("expected PostgreSQL not-null error, got %v", insertErr)
+		}
+		if postgresError.Code != "23502" || postgresError.ColumnName != "status" {
+			t.Fatalf(
+				"expected not-null violation for status, got code %q column %q",
+				postgresError.Code,
+				postgresError.ColumnName,
+			)
+		}
+	})
+}
+
 func TestVisitTimeConflictValidation(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
