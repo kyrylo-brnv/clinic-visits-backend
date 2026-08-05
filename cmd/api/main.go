@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/smithautotest/clinic-visits/internal/app"
 	"github.com/smithautotest/clinic-visits/internal/config"
 	"github.com/smithautotest/clinic-visits/internal/database"
+	"github.com/smithautotest/clinic-visits/internal/elasticsearch"
 )
 
 func main() {
@@ -28,11 +31,27 @@ func main() {
 		log.Fatal("Error loading database config:", err)
 	}
 
+	elasticsearchConfig, err := config.LoadElasticsearchConfig()
+	if err != nil {
+		log.Fatal("Error loading Elasticsearch config:", err)
+	}
+
 	pool, err := database.NewPostgresPool(databaseConfig)
 	if err != nil {
 		log.Fatal("Error creating postgres pool:", err)
 	}
 	defer pool.Close()
+
+	elasticsearchClient, err := elasticsearch.NewClient(elasticsearchConfig)
+	if err != nil {
+		log.Fatal("Error creating Elasticsearch client:", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := elasticsearchClient.Initialize(ctx); err != nil {
+		log.Fatal("Error initializing Elasticsearch:", err)
+	}
 
 	router := app.New(pool)
 	address := ":" + strconv.Itoa(appServerConfig.HTTPPort)
