@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -143,6 +144,88 @@ func TestUpsertDocumentReportsRequestAndStatusFailures(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "PHI-SENTINEL") {
 		t.Fatalf("UpsertDocument() status error contains response body: %q", err)
+	}
+}
+
+func TestGetDocumentReturnsSourceAndTreatsMissingAsNotFound(t *testing.T) {
+	client, err := NewClient(&config.ElasticsearchConfig{URL: "http://localhost:9200"})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	responses := []*http.Response{
+		{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader(`{"_source":{"id":"visit-1","status":"CLOSED"}}`)),
+		},
+		{
+			StatusCode: http.StatusNotFound,
+			Status:     "404 Not Found",
+			Body:       io.NopCloser(strings.NewReader(`{"found":false}`)),
+		},
+	}
+	requests := make([]*http.Request, 0, 2)
+	client.httpClient = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request)
+		response := responses[0]
+		responses = responses[1:]
+		return response, nil
+	})}
+
+	var document struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	found, err := client.GetDocument(t.Context(), "visits-v1", "visit/1", &document)
+	if err != nil {
+		t.Fatalf("GetDocument() error = %v", err)
+	}
+	if !found || document.ID != "visit-1" || document.Status != "CLOSED" {
+		t.Fatalf("GetDocument() found=%t document=%+v", found, document)
+	}
+
+	found, err = client.GetDocument(t.Context(), "visits-v1", "missing", &document)
+	if err != nil {
+		t.Fatalf("missing GetDocument() error = %v", err)
+	}
+	if found {
+		t.Fatal("missing GetDocument() found = true, want false")
+	}
+	if requests[0].Method != http.MethodGet || requests[0].URL.EscapedPath() != "/visits-v1/_doc/visit%2F1" {
+		t.Fatalf("first request = %s %s", requests[0].Method, requests[0].URL.EscapedPath())
+	}
+}
+
+func TestDeleteDocumentIsIdempotent(t *testing.T) {
+	client, err := NewClient(&config.ElasticsearchConfig{URL: "http://localhost:9200"})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	statuses := []int{http.StatusOK, http.StatusNotFound}
+	requests := make([]*http.Request, 0, 2)
+	client.httpClient = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request)
+		status := statuses[0]
+		statuses = statuses[1:]
+		return &http.Response{
+			StatusCode: status,
+			Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+			Body:       io.NopCloser(strings.NewReader("{}")),
+		}, nil
+	})}
+
+	if err := client.DeleteDocument(t.Context(), "visits-v1", "visit/1"); err != nil {
+		t.Fatalf("first DeleteDocument() error = %v", err)
+	}
+	if err := client.DeleteDocument(t.Context(), "visits-v1", "visit/1"); err != nil {
+		t.Fatalf("retry DeleteDocument() error = %v", err)
+	}
+	for _, request := range requests {
+		if request.Method != http.MethodDelete || request.URL.EscapedPath() != "/visits-v1/_doc/visit%2F1" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.EscapedPath())
+		}
 	}
 }
 
