@@ -13,7 +13,157 @@ import (
 	"github.com/smithautotest/clinic-visits/internal/config"
 )
 
-const BootstrapIndexName = "clinic-visits-bootstrap-v1"
+const (
+	DoctorsIndexName  = "doctors-v1"
+	VisitsIndexName   = "visits-v1"
+	PatientsIndexName = "patients-v1"
+	ClinicsIndexName  = "clinics-v1"
+)
+
+type indexDefinition struct {
+	name string
+	body string
+}
+
+var indexDefinitions = []indexDefinition{
+	{
+		name: DoctorsIndexName,
+		body: `{
+  "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+  "mappings": {
+    "properties": {
+      "id": {"type": "keyword"},
+      "specialty_id": {"type": "keyword"},
+      "clinic_id": {"type": "keyword"},
+      "full_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+      "created_at": {"type": "date"},
+      "updated_at": {"type": "date"},
+      "visits": {
+        "type": "nested",
+        "properties": {
+          "id": {"type": "keyword"},
+          "doctor_id": {"type": "keyword"},
+          "patient_id": {"type": "keyword"},
+          "clinic_id": {"type": "keyword"},
+          "status": {"type": "keyword"},
+          "visit_start_time": {"type": "date"},
+          "visit_end_time": {"type": "date"},
+          "created_at": {"type": "date"},
+          "updated_at": {"type": "date"}
+        }
+      }
+    }
+  }
+}`,
+	},
+	{
+		name: VisitsIndexName,
+		body: `{
+  "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+  "mappings": {
+    "properties": {
+      "id": {"type": "keyword"},
+      "doctor_id": {"type": "keyword"},
+      "patient_id": {"type": "keyword"},
+      "clinic_id": {"type": "keyword"},
+      "status": {"type": "keyword"},
+      "visit_start_time": {"type": "date"},
+      "visit_end_time": {"type": "date"},
+      "created_at": {"type": "date"},
+      "updated_at": {"type": "date"},
+      "doctor": {
+        "properties": {
+          "id": {"type": "keyword"},
+          "specialty_id": {"type": "keyword"},
+          "clinic_id": {"type": "keyword"},
+          "full_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}}
+        }
+      },
+      "patient": {
+        "properties": {
+          "id": {"type": "keyword"},
+          "first_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "last_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "date_of_birth": {"type": "date"},
+          "gender": {"type": "keyword"},
+          "is_deleted": {"type": "boolean"}
+        }
+      },
+      "clinic": {
+        "properties": {
+          "id": {"type": "keyword"},
+          "name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "address": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "time_zone": {"type": "keyword"}
+        }
+      }
+    }
+  }
+}`,
+	},
+	{
+		name: PatientsIndexName,
+		body: `{
+  "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+  "mappings": {
+    "properties": {
+      "id": {"type": "keyword"},
+      "first_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+      "last_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+      "date_of_birth": {"type": "date"},
+      "gender": {"type": "keyword"},
+      "is_deleted": {"type": "boolean"},
+      "created_at": {"type": "date"},
+      "updated_at": {"type": "date"},
+      "visits": {
+        "type": "nested",
+        "properties": {
+          "id": {"type": "keyword"},
+          "doctor_id": {"type": "keyword"},
+          "patient_id": {"type": "keyword"},
+          "clinic_id": {"type": "keyword"},
+          "status": {"type": "keyword"},
+          "visit_start_time": {"type": "date"},
+          "visit_end_time": {"type": "date"},
+          "created_at": {"type": "date"},
+          "updated_at": {"type": "date"}
+        }
+      }
+    }
+  }
+}`,
+	},
+	{
+		name: ClinicsIndexName,
+		body: `{
+  "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+  "mappings": {
+    "properties": {
+      "id": {"type": "keyword"},
+      "name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+      "address": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+      "time_zone": {"type": "keyword"},
+      "created_at": {"type": "date"},
+      "updated_at": {"type": "date"},
+      "visits": {
+        "type": "nested",
+        "properties": {
+          "id": {"type": "keyword"},
+          "doctor_id": {"type": "keyword"},
+          "patient_id": {"type": "keyword"},
+          "clinic_id": {"type": "keyword"},
+          "status": {"type": "keyword"},
+          "visit_start_time": {"type": "date"},
+          "visit_end_time": {"type": "date"},
+          "created_at": {"type": "date"},
+          "updated_at": {"type": "date"}
+        }
+      }
+    }
+  }
+}`,
+	},
+}
 
 type Client struct {
 	baseURL    *url.URL
@@ -49,8 +199,10 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err := c.checkHealth(ctx); err != nil {
 		return fmt.Errorf("check elasticsearch health: %w", err)
 	}
-	if err := c.ensureIndex(ctx, BootstrapIndexName); err != nil {
-		return fmt.Errorf("ensure elasticsearch index %q: %w", BootstrapIndexName, err)
+	for _, definition := range indexDefinitions {
+		if err := c.ensureIndex(ctx, definition); err != nil {
+			return fmt.Errorf("ensure elasticsearch index %q: %w", definition.name, err)
+		}
 	}
 
 	return nil
@@ -89,8 +241,8 @@ func (c *Client) checkHealth(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) ensureIndex(ctx context.Context, name string) error {
-	request, err := c.newRequest(ctx, http.MethodHead, "/"+name, nil)
+func (c *Client) ensureIndex(ctx context.Context, definition indexDefinition) error {
+	request, err := c.newRequest(ctx, http.MethodHead, "/"+definition.name, nil)
 	if err != nil {
 		return err
 	}
@@ -110,8 +262,8 @@ func (c *Client) ensureIndex(ctx context.Context, name string) error {
 	}
 	response.Body.Close()
 
-	body := strings.NewReader(`{"settings":{"number_of_shards":1,"number_of_replicas":0}}`)
-	request, err = c.newRequest(ctx, http.MethodPut, "/"+name, body)
+	body := strings.NewReader(definition.body)
+	request, err = c.newRequest(ctx, http.MethodPut, "/"+definition.name, body)
 	if err != nil {
 		return err
 	}
@@ -124,6 +276,16 @@ func (c *Client) ensureIndex(ctx context.Context, name string) error {
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		if response.StatusCode == http.StatusBadRequest {
+			body, err := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+			if err != nil {
+				return fmt.Errorf("unexpected response status %s (read response: %w)", response.Status, err)
+			}
+			if isIndexAlreadyExistsError(body) {
+				return nil
+			}
+			return responseStatusErrorWithBody(response.Status, body)
+		}
 		return responseStatusError(response)
 	}
 
@@ -158,10 +320,27 @@ func responseStatusError(response *http.Response) error {
 		return fmt.Errorf("unexpected response status %s (read response: %w)", response.Status, err)
 	}
 
+	return responseStatusErrorWithBody(response.Status, body)
+}
+
+func responseStatusErrorWithBody(status string, body []byte) error {
 	detail := strings.TrimSpace(string(body))
 	if detail == "" {
-		return fmt.Errorf("unexpected response status %s", response.Status)
+		return fmt.Errorf("unexpected response status %s", status)
 	}
 
-	return fmt.Errorf("unexpected response status %s: %s", response.Status, detail)
+	return fmt.Errorf("unexpected response status %s: %s", status, detail)
+}
+
+func isIndexAlreadyExistsError(body []byte) bool {
+	var response struct {
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return false
+	}
+
+	return response.Error.Type == "resource_already_exists_exception"
 }
