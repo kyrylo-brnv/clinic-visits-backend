@@ -4,9 +4,11 @@ package visit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,208 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/smithautotest/clinic-visits/internal/database/sqlc"
 )
+
+func TestCreateVisitPersistsCreatedOutboxEvent(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	doctorID, patientID, _, clinicID := createVisitScheduleFixtures(t, transaction)
+	startTime := time.Now().UTC().Add(7 * 24 * time.Hour).Truncate(time.Microsecond)
+	created, err := newPostgresRepository(transaction).CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       doctorID.String(),
+		PatientID:      patientID.String(),
+		ClinicID:       clinicID.String(),
+		VisitStartTime: startTime,
+		VisitEndTime:   startTime.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create visit: %v", err)
+	}
+
+	var aggregateType, aggregateID, eventType string
+	var payload []byte
+	var processedAt pgtype.Timestamptz
+	var eventCount int64
+	if err := transaction.QueryRow(
+		ctx,
+		`SELECT
+			aggregate_type,
+			aggregate_id::text,
+			event_type,
+			payload,
+			processed_at,
+			count(*) OVER ()
+		 FROM outbox_events
+		 WHERE aggregate_id = $1`,
+		created.ID,
+	).Scan(
+		&aggregateType,
+		&aggregateID,
+		&eventType,
+		&payload,
+		&processedAt,
+		&eventCount,
+	); err != nil {
+		t.Fatalf("read visit created outbox event: %v", err)
+	}
+
+	if eventCount != 1 {
+		t.Fatalf("expected exactly one outbox event, got %d", eventCount)
+	}
+	if aggregateType != "visit" || aggregateID != created.ID || eventType != "visit.created" {
+		t.Fatalf(
+			"unexpected event association: aggregate_type=%q aggregate_id=%q event_type=%q",
+			aggregateType,
+			aggregateID,
+			eventType,
+		)
+	}
+	if processedAt.Valid {
+		t.Fatalf("expected new outbox event to be pending, got processed_at %v", processedAt.Time)
+	}
+
+	var decodedPayload createdEventPayload
+	if err := json.Unmarshal(payload, &decodedPayload); err != nil {
+		t.Fatalf("decode visit created payload: %v", err)
+	}
+	if decodedPayload.ID != created.ID ||
+		decodedPayload.DoctorID != created.DoctorID ||
+		decodedPayload.PatientID != created.PatientID ||
+		decodedPayload.ClinicID != created.ClinicID ||
+		decodedPayload.Status != created.Status ||
+		!decodedPayload.VisitStartTime.Equal(created.VisitStartTime) ||
+		!decodedPayload.VisitEndTime.Equal(created.VisitEndTime) ||
+		!decodedPayload.CreatedAt.Equal(created.CreatedAt) ||
+		!decodedPayload.UpdatedAt.Equal(created.UpdatedAt) {
+		t.Fatalf("expected payload to contain created visit %+v, got %+v", created, decodedPayload)
+	}
+}
+
+func TestCreateVisitFailuresDoNotPersistVisitOrOutboxEvent(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	doctorID, patientID, _, clinicID := createVisitScheduleFixtures(t, transaction)
+	otherClinicID := createClinicFixture(t, transaction, "Visit Creation Failure Other Clinic")
+	startTime := time.Now().UTC().Add(8 * 24 * time.Hour).Truncate(time.Microsecond)
+
+	tests := []struct {
+		name     string
+		request  CreateVisitRequest
+		expected error
+	}{
+		{
+			name: "invalid time range",
+			request: CreateVisitRequest{
+				DoctorID:       doctorID.String(),
+				PatientID:      patientID.String(),
+				ClinicID:       clinicID.String(),
+				VisitStartTime: startTime,
+				VisitEndTime:   startTime,
+			},
+			expected: ErrInvalidTimeRange,
+		},
+		{
+			name: "doctor clinic mismatch",
+			request: CreateVisitRequest{
+				DoctorID:       doctorID.String(),
+				PatientID:      patientID.String(),
+				ClinicID:       otherClinicID.String(),
+				VisitStartTime: startTime.Add(2 * time.Hour),
+				VisitEndTime:   startTime.Add(3 * time.Hour),
+			},
+			expected: ErrDoctorClinicMismatch,
+		},
+	}
+
+	repository := newPostgresRepository(transaction)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, createErr := repository.CreateVisit(ctx, test.request)
+			if !errors.Is(createErr, test.expected) {
+				t.Fatalf("expected %v, got %v", test.expected, createErr)
+			}
+
+			assertNoVisitOrEvent(t, transaction, doctorID, patientID)
+		})
+	}
+}
+
+func TestCreateVisitRollsBackWhenOutboxInsertFails(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	doctorID, patientID, _, clinicID := createVisitScheduleFixtures(t, transaction)
+	constraintName := fmt.Sprintf("reject_visit_created_%d", time.Now().UnixNano())
+	if _, err := transaction.Exec(
+		ctx,
+		fmt.Sprintf(
+			"ALTER TABLE outbox_events ADD CONSTRAINT %s CHECK (event_type <> 'visit.created') NOT VALID",
+			constraintName,
+		),
+	); err != nil {
+		t.Fatalf("install outbox failure constraint: %v", err)
+	}
+
+	startTime := time.Now().UTC().Add(9 * 24 * time.Hour).Truncate(time.Microsecond)
+	_, err = newPostgresRepository(transaction).CreateVisit(ctx, CreateVisitRequest{
+		DoctorID:       doctorID.String(),
+		PatientID:      patientID.String(),
+		ClinicID:       clinicID.String(),
+		VisitStartTime: startTime,
+		VisitEndTime:   startTime.Add(time.Hour),
+	})
+	if err == nil || !strings.Contains(err.Error(), "insert visit created outbox event") {
+		t.Fatalf("expected contextual outbox insert error, got %v", err)
+	}
+
+	assertNoVisitOrEvent(t, transaction, doctorID, patientID)
+}
 
 func TestCreateVisitRejectsDoctorFromAnotherClinic(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -1060,4 +1264,35 @@ func createPatientScheduleFixtures(
 	}
 
 	return firstDoctorID, firstClinicID, secondDoctorID, secondClinicID, patientID
+}
+
+func assertNoVisitOrEvent(
+	t *testing.T,
+	transaction pgx.Tx,
+	doctorID pgtype.UUID,
+	patientID pgtype.UUID,
+) {
+	t.Helper()
+
+	var visitCount, eventCount int64
+	if err := transaction.QueryRow(
+		t.Context(),
+		`SELECT
+			(SELECT count(*) FROM visits WHERE doctor_id = $1 AND patient_id = $2),
+			(SELECT count(*)
+			 FROM outbox_events
+			 WHERE aggregate_type = 'visit'
+			   AND payload->>'doctor_id' = $3
+			   AND payload->>'patient_id' = $4)`,
+		doctorID,
+		patientID,
+		doctorID.String(),
+		patientID.String(),
+	).Scan(&visitCount, &eventCount); err != nil {
+		t.Fatalf("count visits and outbox events: %v", err)
+	}
+
+	if visitCount != 0 || eventCount != 0 {
+		t.Fatalf("expected no visit or outbox event, got %d visits and %d events", visitCount, eventCount)
+	}
 }

@@ -26,6 +26,16 @@ type Doctor struct {
 	ClinicID    pgtype.UUID
 }
 
+type OutboxEvent struct {
+	ID            pgtype.UUID
+	AggregateType string
+	AggregateID   pgtype.UUID
+	EventType     string
+	Payload       []byte
+	CreatedAt     pgtype.Timestamptz
+	ProcessedAt   pgtype.Timestamptz
+}
+
 type Patient struct {
 	ID          pgtype.UUID
 	FirstName   string
