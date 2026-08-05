@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -568,41 +569,50 @@ func TestUpdateVisitReturnsUpdatedVisitAndPreservesOmittedFields(t *testing.T) {
 	}
 }
 
-func TestUpdateVisitChangesStatus(t *testing.T) {
+func TestUpdateVisitAcceptsSameStatusWithTimeChange(t *testing.T) {
 	t.Parallel()
 
-	repo := &fakeRepository{updatedVisit: Visit{
-		ID:     "44444444-4444-4444-8444-444444444444",
-		Status: StatusClosed,
-	}}
-	handler := NewHandler(repo)
-	request := httptest.NewRequest(
-		http.MethodPatch,
-		"/v1/visits/update",
-		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444","status":"CLOSED"}`),
-	)
-	response := httptest.NewRecorder()
+	for _, status := range []string{StatusScheduled, StatusInProgress, StatusClosed, StatusCanceled} {
+		t.Run(status, func(t *testing.T) {
+			newEndTime := time.Date(2026, time.August, 5, 11, 0, 0, 0, time.UTC)
+			repo := &fakeRepository{updatedVisit: Visit{
+				ID:           "44444444-4444-4444-8444-444444444444",
+				Status:       status,
+				VisitEndTime: newEndTime,
+			}}
+			handler := NewHandler(repo)
+			request := httptest.NewRequest(
+				http.MethodPatch,
+				"/v1/visits/update",
+				strings.NewReader(fmt.Sprintf(`{"visit_id":"44444444-4444-4444-8444-444444444444","status":"%s","visit_end_time":"2026-08-05T11:00:00Z"}`, status)),
+			)
+			response := httptest.NewRecorder()
 
-	handler.UpdateVisit(response, request)
+			handler.UpdateVisit(response, request)
 
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
-	}
-	if repo.lastUpdate.Status == nil || *repo.lastUpdate.Status != StatusClosed {
-		t.Fatalf("expected status %q to be forwarded, got %+v", StatusClosed, repo.lastUpdate.Status)
-	}
-	if repo.lastUpdate.DoctorID != nil || repo.lastUpdate.PatientID != nil || repo.lastUpdate.ClinicID != nil || repo.lastUpdate.VisitStartTime != nil || repo.lastUpdate.VisitEndTime != nil {
-		t.Fatalf("expected status-only update, got %+v", repo.lastUpdate)
-	}
+			if response.Code != http.StatusOK {
+				t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+			}
+			if repo.lastUpdate.Status == nil || *repo.lastUpdate.Status != status {
+				t.Fatalf("expected status %q to be forwarded, got %+v", status, repo.lastUpdate.Status)
+			}
+			if repo.lastUpdate.VisitEndTime == nil || !repo.lastUpdate.VisitEndTime.Equal(newEndTime) {
+				t.Fatalf("expected end time %v to be forwarded, got %+v", newEndTime, repo.lastUpdate.VisitEndTime)
+			}
+			if repo.lastUpdate.DoctorID != nil || repo.lastUpdate.PatientID != nil || repo.lastUpdate.ClinicID != nil || repo.lastUpdate.VisitStartTime != nil {
+				t.Fatalf("expected only status and end time update, got %+v", repo.lastUpdate)
+			}
 
-	var body struct {
-		Data Visit `json:"data"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body.Data.Status != StatusClosed {
-		t.Fatalf("expected response status %q, got %q", StatusClosed, body.Data.Status)
+			var body struct {
+				Data Visit `json:"data"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body.Data.Status != status || !body.Data.VisitEndTime.Equal(newEndTime) {
+				t.Fatalf("expected response status %q and end time %v, got %+v", status, newEndTime, body.Data)
+			}
+		})
 	}
 }
 
@@ -661,6 +671,11 @@ func TestUpdateVisitMapsRepositoryErrors(t *testing.T) {
 		{name: "clinic not found", err: ErrClinicNotFound, status: http.StatusNotFound},
 		{name: "doctor clinic mismatch", err: ErrDoctorClinicMismatch, status: http.StatusBadRequest},
 		{name: "invalid final time range", err: ErrInvalidTimeRange, status: http.StatusBadRequest},
+		{
+			name:   "invalid status transition",
+			err:    fmt.Errorf("%w: SCHEDULED -> CLOSED", ErrInvalidStatusTransition),
+			status: http.StatusBadRequest,
+		},
 		{name: "visit time conflict", err: ErrVisitTimeConflict, status: http.StatusConflict},
 		{name: "patient time conflict", err: ErrPatientTimeConflict, status: http.StatusConflict},
 		{name: "database error", err: errors.New("database unavailable"), status: http.StatusInternalServerError},
@@ -679,6 +694,17 @@ func TestUpdateVisitMapsRepositoryErrors(t *testing.T) {
 
 			if response.Code != test.status {
 				t.Fatalf("expected status %d, got %d", test.status, response.Code)
+			}
+			if errors.Is(test.err, ErrInvalidStatusTransition) {
+				var body struct {
+					Error string `json:"error"`
+				}
+				if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+					t.Fatalf("decode transition error response: %v", err)
+				}
+				if body.Error != "invalid visit status transition: SCHEDULED -> CLOSED" {
+					t.Fatalf("expected clear transition error, got %q", body.Error)
+				}
 			}
 		})
 	}

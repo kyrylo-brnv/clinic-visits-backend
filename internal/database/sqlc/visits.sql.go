@@ -94,6 +94,20 @@ func (q *Queries) DeleteVisit(ctx context.Context, visitID pgtype.UUID) (string,
 	return id, err
 }
 
+const getVisitStatusForUpdate = `-- name: GetVisitStatusForUpdate :one
+SELECT status
+FROM visits
+WHERE id = $1
+FOR UPDATE
+`
+
+func (q *Queries) GetVisitStatusForUpdate(ctx context.Context, visitID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getVisitStatusForUpdate, visitID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const listVisits = `-- name: ListVisits :many
 SELECT
     id::text AS id,

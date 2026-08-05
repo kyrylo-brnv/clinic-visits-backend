@@ -259,7 +259,8 @@ func writeUpdateVisitError(w http.ResponseWriter, err error) {
 		errors.Is(err, ErrClinicNotFound):
 		httpapi.WriteJSONError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDoctorClinicMismatch),
-		errors.Is(err, ErrInvalidTimeRange):
+		errors.Is(err, ErrInvalidTimeRange),
+		errors.Is(err, ErrInvalidStatusTransition):
 		httpapi.WriteJSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrVisitTimeConflict),
 		errors.Is(err, ErrPatientTimeConflict):

@@ -66,3 +66,9 @@ RETURNING
     visit_end_time,
     created_at,
     updated_at;
+
+-- name: GetVisitStatusForUpdate :one
+SELECT status
+FROM visits
+WHERE id = sqlc.arg('visit_id')
+FOR UPDATE;

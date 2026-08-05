@@ -23,6 +23,25 @@ func IsValidStatus(status string) bool {
 	}
 }
 
+func CanTransitionStatus(currentStatus, nextStatus string) bool {
+	if !IsValidStatus(currentStatus) || !IsValidStatus(nextStatus) {
+		return false
+	}
+
+	if currentStatus == nextStatus {
+		return true
+	}
+
+	switch currentStatus {
+	case StatusScheduled:
+		return nextStatus == StatusInProgress || nextStatus == StatusCanceled
+	case StatusInProgress:
+		return nextStatus == StatusClosed || nextStatus == StatusCanceled
+	default:
+		return false
+	}
+}
+
 type Visit struct {
 	ID             string    `json:"id"`
 	DoctorID       string    `json:"doctor_id"`
