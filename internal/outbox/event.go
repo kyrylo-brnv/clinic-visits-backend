@@ -8,6 +8,8 @@ import (
 const (
 	AggregateTypeVisit    = "visit"
 	EventTypeVisitCreated = "visit.created"
+	EventTypeVisitUpdated = "visit.updated"
+	EventTypeVisitDeleted = "visit.deleted"
 )
 
 type Event struct {

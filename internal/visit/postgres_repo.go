@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/smithautotest/clinic-visits/internal/database/sqlc"
+	"github.com/smithautotest/clinic-visits/internal/outbox"
 	"github.com/smithautotest/clinic-visits/internal/uuid"
 )
 
@@ -89,18 +90,8 @@ func (r *PostgresRepository) CreateVisit(
 		return Visit{}, fmt.Errorf("create visit created outbox event: %w", err)
 	}
 
-	aggregateID, err := uuid.Parse(event.AggregateID)
-	if err != nil {
-		return Visit{}, fmt.Errorf("parse visit created outbox aggregate ID: %w", err)
-	}
-
-	if err := queries.CreateOutboxEvent(ctx, sqlc.CreateOutboxEventParams{
-		AggregateType: event.AggregateType,
-		AggregateID:   aggregateID,
-		EventType:     event.EventType,
-		Payload:       event.Payload,
-	}); err != nil {
-		return Visit{}, fmt.Errorf("insert visit created outbox event: %w", err)
+	if err := insertVisitOutboxEvent(ctx, queries, event, "created"); err != nil {
+		return Visit{}, err
 	}
 
 	if err := transaction.Commit(ctx); err != nil {
@@ -149,12 +140,33 @@ func (r *PostgresRepository) DeleteVisit(
 		return fmt.Errorf("invalid visit ID: %w", err)
 	}
 
-	if _, err := r.queries.DeleteVisit(ctx, visitID); err != nil {
+	transaction, err := r.database.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin visit deletion transaction: %w", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	queries := r.queries.WithTx(transaction)
+	row, err := queries.DeleteVisit(ctx, visitID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrVisitNotFound
 		}
 
 		return fmt.Errorf("failed to delete visit: %w", err)
+	}
+	deletedVisit := mapDeleteVisitRow(row)
+
+	event, err := newDeletedEvent(deletedVisit)
+	if err != nil {
+		return fmt.Errorf("create visit deleted outbox event: %w", err)
+	}
+	if err := insertVisitOutboxEvent(ctx, queries, event, "deleted"); err != nil {
+		return err
+	}
+
+	if err := transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("commit visit deletion transaction: %w", err)
 	}
 
 	return nil
@@ -193,62 +205,92 @@ func (r *PostgresRepository) UpdateVisit(
 		VisitEndTime:   optionalTimestamp(request.VisitEndTime),
 		Status:         optionalText(request.Status),
 	}
-	if request.Status != nil {
-		return r.updateVisitWithStatusTransition(ctx, request, visitID, params)
-	}
-
-	row, err := r.queries.UpdateVisit(ctx, params)
-	if err != nil {
-		return Visit{}, mapUpdateVisitError(err)
-	}
-
-	return mapUpdateVisitRow(row), nil
-}
-
-func (r *PostgresRepository) updateVisitWithStatusTransition(
-	ctx context.Context,
-	request UpdateVisitRequest,
-	visitID pgtype.UUID,
-	params sqlc.UpdateVisitParams,
-) (Visit, error) {
 	transaction, err := r.database.Begin(ctx)
 	if err != nil {
-		return Visit{}, fmt.Errorf("begin visit status update transaction: %w", err)
+		return Visit{}, fmt.Errorf("begin visit update transaction: %w", err)
 	}
 	defer transaction.Rollback(ctx)
 
 	queries := r.queries.WithTx(transaction)
-	currentStatus, err := queries.GetVisitStatusForUpdate(ctx, visitID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Visit{}, ErrVisitNotFound
+	if request.Status != nil {
+		currentStatus, err := queries.GetVisitStatusForUpdate(ctx, visitID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Visit{}, ErrVisitNotFound
+			}
+
+			return Visit{}, fmt.Errorf("lock visit for status update: %w", err)
 		}
 
-		return Visit{}, fmt.Errorf("lock visit for status update: %w", err)
-	}
-
-	if !CanTransitionStatus(currentStatus, *request.Status) {
-		return Visit{}, fmt.Errorf(
-			"%w: %s -> %s",
-			ErrInvalidStatusTransition,
-			currentStatus,
-			*request.Status,
-		)
+		if !CanTransitionStatus(currentStatus, *request.Status) {
+			return Visit{}, fmt.Errorf(
+				"%w: %s -> %s",
+				ErrInvalidStatusTransition,
+				currentStatus,
+				*request.Status,
+			)
+		}
 	}
 
 	row, err := queries.UpdateVisit(ctx, params)
 	if err != nil {
 		return Visit{}, mapUpdateVisitError(err)
 	}
+	updatedVisit := mapUpdateVisitRow(row)
 
-	if err := transaction.Commit(ctx); err != nil {
-		return Visit{}, fmt.Errorf("commit visit status update transaction: %w", err)
+	event, err := newUpdatedEvent(updatedVisit)
+	if err != nil {
+		return Visit{}, fmt.Errorf("create visit updated outbox event: %w", err)
+	}
+	if err := insertVisitOutboxEvent(ctx, queries, event, "updated"); err != nil {
+		return Visit{}, err
 	}
 
-	return mapUpdateVisitRow(row), nil
+	if err := transaction.Commit(ctx); err != nil {
+		return Visit{}, fmt.Errorf("commit visit update transaction: %w", err)
+	}
+
+	return updatedVisit, nil
+}
+
+func insertVisitOutboxEvent(
+	ctx context.Context,
+	queries *sqlc.Queries,
+	event outbox.Event,
+	action string,
+) error {
+	aggregateID, err := uuid.Parse(event.AggregateID)
+	if err != nil {
+		return fmt.Errorf("parse visit %s outbox aggregate ID: %w", action, err)
+	}
+
+	if err := queries.CreateOutboxEvent(ctx, sqlc.CreateOutboxEventParams{
+		AggregateType: event.AggregateType,
+		AggregateID:   aggregateID,
+		EventType:     event.EventType,
+		Payload:       event.Payload,
+	}); err != nil {
+		return fmt.Errorf("insert visit %s outbox event: %w", action, err)
+	}
+
+	return nil
 }
 
 func mapUpdateVisitRow(row sqlc.UpdateVisitRow) Visit {
+	return Visit{
+		ID:             row.ID,
+		DoctorID:       row.DoctorID,
+		PatientID:      row.PatientID,
+		ClinicID:       row.ClinicID,
+		Status:         row.Status,
+		VisitStartTime: row.VisitStartTime.Time,
+		VisitEndTime:   row.VisitEndTime.Time,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}
+}
+
+func mapDeleteVisitRow(row sqlc.DeleteVisitRow) Visit {
 	return Visit{
 		ID:             row.ID,
 		DoctorID:       row.DoctorID,

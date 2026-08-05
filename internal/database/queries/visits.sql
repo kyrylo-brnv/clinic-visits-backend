@@ -43,7 +43,16 @@ OFFSET sqlc.arg('page_offset')::bigint;
 -- name: DeleteVisit :one
 DELETE FROM visits
 WHERE id = sqlc.arg('visit_id')
-RETURNING id::text;
+RETURNING
+    id::text AS id,
+    doctor_id::text AS doctor_id,
+    patient_id::text AS patient_id,
+    clinic_id::text AS clinic_id,
+    status,
+    visit_start_time,
+    visit_end_time,
+    created_at,
+    updated_at;
 
 -- name: UpdateVisit :one
 UPDATE visits

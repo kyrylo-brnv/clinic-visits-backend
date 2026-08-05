@@ -42,3 +42,62 @@ func (q *Queries) CreateOutboxEvent(ctx context.Context, arg CreateOutboxEventPa
 	)
 	return err
 }
+
+const listPendingOutboxEventsForUpdate = `-- name: ListPendingOutboxEventsForUpdate :many
+SELECT
+    id,
+    aggregate_type,
+    aggregate_id,
+    event_type,
+    payload,
+    created_at,
+    processed_at
+FROM outbox_events
+WHERE processed_at IS NULL
+ORDER BY created_at, id
+LIMIT $1::int
+FOR UPDATE SKIP LOCKED
+`
+
+func (q *Queries) ListPendingOutboxEventsForUpdate(ctx context.Context, batchSize int32) ([]OutboxEvent, error) {
+	rows, err := q.db.Query(ctx, listPendingOutboxEventsForUpdate, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OutboxEvent
+	for rows.Next() {
+		var i OutboxEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.AggregateType,
+			&i.AggregateID,
+			&i.EventType,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.ProcessedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markOutboxEventProcessed = `-- name: MarkOutboxEventProcessed :execrows
+UPDATE outbox_events
+SET processed_at = CURRENT_TIMESTAMP
+WHERE id = $1
+  AND processed_at IS NULL
+`
+
+func (q *Queries) MarkOutboxEventProcessed(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxEventProcessed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
