@@ -9,14 +9,15 @@ import (
 )
 
 var (
-	ErrDoctorNotFound       = errors.New("doctor not found")
-	ErrPatientNotFound      = errors.New("patient not found")
-	ErrClinicNotFound       = errors.New("clinic not found")
-	ErrVisitNotFound        = errors.New("visit not found")
-	ErrVisitTimeConflict    = errors.New("doctor already has a visit during this time")
-	ErrPatientTimeConflict  = errors.New("patient already has a visit during this time")
-	ErrDoctorClinicMismatch = errors.New("doctor does not belong to clinic")
-	ErrInvalidTimeRange     = errors.New("visit end time must be after start time")
+	ErrDoctorNotFound          = errors.New("doctor not found")
+	ErrPatientNotFound         = errors.New("patient not found")
+	ErrClinicNotFound          = errors.New("clinic not found")
+	ErrVisitNotFound           = errors.New("visit not found")
+	ErrVisitTimeConflict       = errors.New("doctor already has a visit during this time")
+	ErrPatientTimeConflict     = errors.New("patient already has a visit during this time")
+	ErrDoctorClinicMismatch    = errors.New("doctor does not belong to clinic")
+	ErrInvalidTimeRange        = errors.New("visit end time must be after start time")
+	ErrInvalidStatusTransition = errors.New("invalid visit status transition")
 )
 
 type CreateVisitRequest struct {

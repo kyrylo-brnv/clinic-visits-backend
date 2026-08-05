@@ -15,11 +15,24 @@ import (
 )
 
 type PostgresRepository struct {
-	queries *sqlc.Queries
+	queries  *sqlc.Queries
+	database postgresDatabase
 }
 
 func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
-	return &PostgresRepository{queries: sqlc.New(pool)}
+	return newPostgresRepository(pool)
+}
+
+type postgresDatabase interface {
+	sqlc.DBTX
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+func newPostgresRepository(database postgresDatabase) *PostgresRepository {
+	return &PostgresRepository{
+		queries:  sqlc.New(database),
+		database: database,
+	}
 }
 
 func (r *PostgresRepository) CreateVisit(
@@ -139,7 +152,7 @@ func (r *PostgresRepository) UpdateVisit(
 		return Visit{}, err
 	}
 
-	row, err := r.queries.UpdateVisit(ctx, sqlc.UpdateVisitParams{
+	params := sqlc.UpdateVisitParams{
 		VisitID:        visitID,
 		DoctorID:       doctorID,
 		PatientID:      patientID,
@@ -147,11 +160,63 @@ func (r *PostgresRepository) UpdateVisit(
 		VisitStartTime: optionalTimestamp(request.VisitStartTime),
 		VisitEndTime:   optionalTimestamp(request.VisitEndTime),
 		Status:         optionalText(request.Status),
-	})
+	}
+	if request.Status != nil {
+		return r.updateVisitWithStatusTransition(ctx, request, visitID, params)
+	}
+
+	row, err := r.queries.UpdateVisit(ctx, params)
 	if err != nil {
 		return Visit{}, mapUpdateVisitError(err)
 	}
 
+	return mapUpdateVisitRow(row), nil
+}
+
+func (r *PostgresRepository) updateVisitWithStatusTransition(
+	ctx context.Context,
+	request UpdateVisitRequest,
+	visitID pgtype.UUID,
+	params sqlc.UpdateVisitParams,
+) (Visit, error) {
+	transaction, err := r.database.Begin(ctx)
+	if err != nil {
+		return Visit{}, fmt.Errorf("begin visit status update transaction: %w", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	queries := r.queries.WithTx(transaction)
+	currentStatus, err := queries.GetVisitStatusForUpdate(ctx, visitID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Visit{}, ErrVisitNotFound
+		}
+
+		return Visit{}, fmt.Errorf("lock visit for status update: %w", err)
+	}
+
+	if !CanTransitionStatus(currentStatus, *request.Status) {
+		return Visit{}, fmt.Errorf(
+			"%w: %s -> %s",
+			ErrInvalidStatusTransition,
+			currentStatus,
+			*request.Status,
+		)
+	}
+
+	row, err := queries.UpdateVisit(ctx, params)
+	if err != nil {
+		return Visit{}, mapUpdateVisitError(err)
+	}
+
+	if err := transaction.Commit(ctx); err != nil {
+		return Visit{}, fmt.Errorf("commit visit status update transaction: %w", err)
+	}
+
+	return mapUpdateVisitRow(row), nil
+}
+
+func mapUpdateVisitRow(row sqlc.UpdateVisitRow) Visit {
 	return Visit{
 		ID:             row.ID,
 		DoctorID:       row.DoctorID,
@@ -162,7 +227,7 @@ func (r *PostgresRepository) UpdateVisit(
 		VisitEndTime:   row.VisitEndTime.Time,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
-	}, nil
+	}
 }
 
 func parseOptionalUUID(value *string, fieldName string) (pgtype.UUID, error) {

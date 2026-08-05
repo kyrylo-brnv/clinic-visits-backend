@@ -27,6 +27,43 @@ func TestIsValidStatus(t *testing.T) {
 	}
 }
 
+func TestCanTransitionStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		current string
+		next    string
+		allowed bool
+	}{
+		{name: "scheduled to in progress", current: StatusScheduled, next: StatusInProgress, allowed: true},
+		{name: "scheduled to canceled", current: StatusScheduled, next: StatusCanceled, allowed: true},
+		{name: "in progress to closed", current: StatusInProgress, next: StatusClosed, allowed: true},
+		{name: "in progress to canceled", current: StatusInProgress, next: StatusCanceled, allowed: true},
+		{name: "scheduled to closed", current: StatusScheduled, next: StatusClosed},
+		{name: "in progress to scheduled", current: StatusInProgress, next: StatusScheduled},
+		{name: "closed is terminal", current: StatusClosed, next: StatusCanceled},
+		{name: "canceled is terminal", current: StatusCanceled, next: StatusInProgress},
+		{name: "scheduled to scheduled is idempotent", current: StatusScheduled, next: StatusScheduled, allowed: true},
+		{name: "in progress to in progress is idempotent", current: StatusInProgress, next: StatusInProgress, allowed: true},
+		{name: "closed to closed is idempotent", current: StatusClosed, next: StatusClosed, allowed: true},
+		{name: "canceled to canceled is idempotent", current: StatusCanceled, next: StatusCanceled, allowed: true},
+		{name: "unsupported same status", current: "UNKNOWN", next: "UNKNOWN"},
+		{name: "unsupported current status", current: "UNKNOWN", next: StatusScheduled},
+		{name: "unsupported next status", current: StatusScheduled, next: "UNKNOWN"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if actual := CanTransitionStatus(test.current, test.next); actual != test.allowed {
+				t.Fatalf("expected transition %s -> %s allowed=%t, got %t", test.current, test.next, test.allowed, actual)
+			}
+		})
+	}
+}
+
 func TestVisitMarshalJSONUsesFixedMicrosecondTimestamps(t *testing.T) {
 	t.Parallel()
 

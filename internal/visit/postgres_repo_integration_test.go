@@ -3,7 +3,9 @@
 package visit
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -253,6 +255,295 @@ func TestVisitStatusDatabaseValidation(t *testing.T) {
 	})
 }
 
+func TestVisitStatusFSMRepository(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	doctorID, patientID, _, clinicID := createVisitScheduleFixtures(t, transaction)
+	startTime := time.Now().UTC().Add(96 * time.Hour).Truncate(time.Microsecond)
+
+	tests := []struct {
+		name          string
+		currentStatus string
+		nextStatus    string
+		allowed       bool
+	}{
+		{name: "scheduled to in progress", currentStatus: StatusScheduled, nextStatus: StatusInProgress, allowed: true},
+		{name: "scheduled to canceled", currentStatus: StatusScheduled, nextStatus: StatusCanceled, allowed: true},
+		{name: "in progress to closed", currentStatus: StatusInProgress, nextStatus: StatusClosed, allowed: true},
+		{name: "in progress to canceled", currentStatus: StatusInProgress, nextStatus: StatusCanceled, allowed: true},
+		{name: "scheduled to scheduled is idempotent", currentStatus: StatusScheduled, nextStatus: StatusScheduled, allowed: true},
+		{name: "in progress to in progress is idempotent", currentStatus: StatusInProgress, nextStatus: StatusInProgress, allowed: true},
+		{name: "closed to closed is idempotent", currentStatus: StatusClosed, nextStatus: StatusClosed, allowed: true},
+		{name: "canceled to canceled is idempotent", currentStatus: StatusCanceled, nextStatus: StatusCanceled, allowed: true},
+		{name: "scheduled cannot close", currentStatus: StatusScheduled, nextStatus: StatusClosed},
+		{name: "closed is terminal", currentStatus: StatusClosed, nextStatus: StatusCanceled},
+		{name: "canceled is terminal", currentStatus: StatusCanceled, nextStatus: StatusInProgress},
+	}
+
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			visitStart := startTime.Add(time.Duration(index) * 2 * time.Hour)
+			var visitID string
+			err := transaction.QueryRow(
+				ctx,
+				`INSERT INTO visits (
+					doctor_id,
+					patient_id,
+					clinic_id,
+					visit_start_time,
+					visit_end_time,
+					status
+				 ) VALUES ($1, $2, $3, $4, $5, $6)
+				 RETURNING id::text`,
+				doctorID,
+				patientID,
+				clinicID,
+				visitStart,
+				visitStart.Add(time.Hour),
+				test.currentStatus,
+			).Scan(&visitID)
+			if err != nil {
+				t.Fatalf("create visit fixture: %v", err)
+			}
+
+			newEndTime := visitStart.Add(90 * time.Minute)
+			updated, updateErr := newPostgresRepository(transaction).UpdateVisit(ctx, UpdateVisitRequest{
+				VisitID:      visitID,
+				Status:       &test.nextStatus,
+				VisitEndTime: &newEndTime,
+			})
+
+			if test.allowed {
+				if updateErr != nil {
+					t.Fatalf("expected transition to be allowed: %v", updateErr)
+				}
+				if updated.Status != test.nextStatus || !updated.VisitEndTime.Equal(newEndTime) {
+					t.Fatalf("expected status and time update to persist, got %+v", updated)
+				}
+			} else if !errors.Is(updateErr, ErrInvalidStatusTransition) {
+				t.Fatalf("expected %v, got %v", ErrInvalidStatusTransition, updateErr)
+			}
+
+			var persistedStatus string
+			var persistedEndTime time.Time
+			if err := transaction.QueryRow(
+				ctx,
+				"SELECT status, visit_end_time FROM visits WHERE id = $1",
+				visitID,
+			).Scan(&persistedStatus, &persistedEndTime); err != nil {
+				t.Fatalf("read persisted visit: %v", err)
+			}
+
+			expectedStatus := test.currentStatus
+			expectedEndTime := visitStart.Add(time.Hour)
+			if test.allowed {
+				expectedStatus = test.nextStatus
+				expectedEndTime = newEndTime
+			}
+			if persistedStatus != expectedStatus || !persistedEndTime.Equal(expectedEndTime) {
+				t.Fatalf(
+					"expected persisted status %q and end time %v, got %q and %v",
+					expectedStatus,
+					expectedEndTime,
+					persistedStatus,
+					persistedEndTime,
+				)
+			}
+		})
+	}
+
+	nextStatus := StatusInProgress
+	_, err = newPostgresRepository(transaction).UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID: "44444444-4444-4444-8444-444444444444",
+		Status:  &nextStatus,
+	})
+	if !errors.Is(err, ErrVisitNotFound) {
+		t.Fatalf("expected %v, got %v", ErrVisitNotFound, err)
+	}
+}
+
+func TestVisitStatusFSMSerializesConcurrentUpdates(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	setupTransaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin fixture transaction: %v", err)
+	}
+
+	fixtureSuffix := time.Now().UnixNano()
+	var specialtyID, clinicID, doctorID, patientID pgtype.UUID
+	if err := setupTransaction.QueryRow(
+		ctx,
+		"INSERT INTO specialties (name) VALUES ($1) RETURNING id",
+		fmt.Sprintf("Visit FSM Atomic Specialty %d", fixtureSuffix),
+	).Scan(&specialtyID); err != nil {
+		setupTransaction.Rollback(ctx)
+		t.Fatalf("create specialty fixture: %v", err)
+	}
+	if err := setupTransaction.QueryRow(
+		ctx,
+		`INSERT INTO clinics (name, address, time_zone)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`,
+		fmt.Sprintf("Visit FSM Atomic Clinic %d", fixtureSuffix),
+		"Integration Test Address",
+		"UTC",
+	).Scan(&clinicID); err != nil {
+		setupTransaction.Rollback(ctx)
+		t.Fatalf("create clinic fixture: %v", err)
+	}
+	if err := setupTransaction.QueryRow(
+		ctx,
+		`INSERT INTO doctors (specialty_id, clinic_id, full_name)
+		 VALUES ($1, $2, $3)
+		 RETURNING id`,
+		specialtyID,
+		clinicID,
+		"Visit FSM Atomic Doctor",
+	).Scan(&doctorID); err != nil {
+		setupTransaction.Rollback(ctx)
+		t.Fatalf("create doctor fixture: %v", err)
+	}
+	if err := setupTransaction.QueryRow(
+		ctx,
+		`INSERT INTO patients (first_name, last_name, date_of_birth, gender)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		"Atomic",
+		"Patient",
+		"1990-01-01",
+		"other",
+	).Scan(&patientID); err != nil {
+		setupTransaction.Rollback(ctx)
+		t.Fatalf("create patient fixture: %v", err)
+	}
+
+	startTime := time.Now().UTC().Add(120 * time.Hour).Truncate(time.Microsecond)
+	var visitID string
+	if err := setupTransaction.QueryRow(
+		ctx,
+		`INSERT INTO visits (
+			doctor_id,
+			patient_id,
+			clinic_id,
+			visit_start_time,
+			visit_end_time
+		 ) VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id::text`,
+		doctorID,
+		patientID,
+		clinicID,
+		startTime,
+		startTime.Add(time.Hour),
+	).Scan(&visitID); err != nil {
+		setupTransaction.Rollback(ctx)
+		t.Fatalf("create visit fixture: %v", err)
+	}
+	if err := setupTransaction.Commit(ctx); err != nil {
+		t.Fatalf("commit fixtures: %v", err)
+	}
+
+	defer func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		connection.Exec(cleanupContext, "DELETE FROM visits WHERE id = $1", visitID)
+		connection.Exec(cleanupContext, "DELETE FROM patients WHERE id = $1", patientID)
+		connection.Exec(cleanupContext, "DELETE FROM doctors WHERE id = $1", doctorID)
+		connection.Exec(cleanupContext, "DELETE FROM clinics WHERE id = $1", clinicID)
+		connection.Exec(cleanupContext, "DELETE FROM specialties WHERE id = $1", specialtyID)
+	}()
+
+	firstTransaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin first update transaction: %v", err)
+	}
+	defer firstTransaction.Rollback(ctx)
+
+	firstStatus := StatusCanceled
+	if _, err := newPostgresRepository(firstTransaction).UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID: visitID,
+		Status:  &firstStatus,
+	}); err != nil {
+		t.Fatalf("perform first status update: %v", err)
+	}
+
+	secondConnection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect second PostgreSQL session: %v", err)
+	}
+	defer secondConnection.Close(ctx)
+
+	secondTransaction, err := secondConnection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin second update transaction: %v", err)
+	}
+	defer secondTransaction.Rollback(ctx)
+
+	result := make(chan error, 1)
+	go func() {
+		secondStatus := StatusInProgress
+		_, updateErr := newPostgresRepository(secondTransaction).UpdateVisit(ctx, UpdateVisitRequest{
+			VisitID: visitID,
+			Status:  &secondStatus,
+		})
+		result <- updateErr
+	}()
+
+	select {
+	case updateErr := <-result:
+		firstTransaction.Rollback(ctx)
+		t.Fatalf("expected concurrent update to wait for row lock, got %v", updateErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := firstTransaction.Commit(ctx); err != nil {
+		t.Fatalf("commit first status update: %v", err)
+	}
+
+	select {
+	case updateErr := <-result:
+		if !errors.Is(updateErr, ErrInvalidStatusTransition) {
+			t.Fatalf("expected stale concurrent transition to be rejected with %v, got %v", ErrInvalidStatusTransition, updateErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for concurrent status update")
+	}
+
+	var persistedStatus string
+	if err := connection.QueryRow(ctx, "SELECT status FROM visits WHERE id = $1", visitID).Scan(&persistedStatus); err != nil {
+		t.Fatalf("read final visit status: %v", err)
+	}
+	if persistedStatus != StatusCanceled {
+		t.Fatalf("expected final status %q, got %q", StatusCanceled, persistedStatus)
+	}
+}
+
 func TestVisitTimeConflictValidation(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -273,7 +564,7 @@ func TestVisitTimeConflictValidation(t *testing.T) {
 	defer transaction.Rollback(ctx)
 
 	doctorID, firstPatientID, secondPatientID, clinicID := createVisitScheduleFixtures(t, transaction)
-	repository := &PostgresRepository{queries: sqlc.New(transaction)}
+	repository := newPostgresRepository(transaction)
 	startTime := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
 
 	firstVisit, err := repository.CreateVisit(ctx, CreateVisitRequest{
@@ -316,7 +607,7 @@ func TestVisitTimeConflictValidation(t *testing.T) {
 				t.Fatalf("create savepoint: %v", err)
 			}
 
-			conflictRepository := &PostgresRepository{queries: sqlc.New(savepoint)}
+			conflictRepository := newPostgresRepository(savepoint)
 			_, createErr := conflictRepository.CreateVisit(ctx, CreateVisitRequest{
 				DoctorID:       doctorID.String(),
 				PatientID:      secondPatientID.String(),
@@ -351,7 +642,7 @@ func TestVisitTimeConflictValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create update savepoint: %v", err)
 	}
-	conflictRepository := &PostgresRepository{queries: sqlc.New(updateSavepoint)}
+	conflictRepository := newPostgresRepository(updateSavepoint)
 	_, updateErr := conflictRepository.UpdateVisit(ctx, UpdateVisitRequest{
 		VisitID:        adjacentVisit.ID,
 		VisitStartTime: &conflictingStart,
@@ -398,7 +689,7 @@ func TestPatientTimeConflictValidation(t *testing.T) {
 
 	firstDoctorID, firstClinicID, secondDoctorID, secondClinicID, patientID :=
 		createPatientScheduleFixtures(t, transaction)
-	repository := &PostgresRepository{queries: sqlc.New(transaction)}
+	repository := newPostgresRepository(transaction)
 	startTime := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Microsecond)
 
 	firstVisit, err := repository.CreateVisit(ctx, CreateVisitRequest{
@@ -416,7 +707,7 @@ func TestPatientTimeConflictValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create overlapping visit savepoint: %v", err)
 	}
-	conflictRepository := &PostgresRepository{queries: sqlc.New(createSavepoint)}
+	conflictRepository := newPostgresRepository(createSavepoint)
 	_, createErr := conflictRepository.CreateVisit(ctx, CreateVisitRequest{
 		DoctorID:       secondDoctorID.String(),
 		PatientID:      patientID.String(),
@@ -448,7 +739,7 @@ func TestPatientTimeConflictValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create overlapping update savepoint: %v", err)
 	}
-	conflictRepository = &PostgresRepository{queries: sqlc.New(updateSavepoint)}
+	conflictRepository = newPostgresRepository(updateSavepoint)
 	_, updateErr := conflictRepository.UpdateVisit(ctx, UpdateVisitRequest{
 		VisitID:        adjacentVisit.ID,
 		VisitStartTime: &conflictingStart,
@@ -547,8 +838,8 @@ func TestUpdateAndDeleteVisit(t *testing.T) {
 		t.Fatalf("create visit fixture: %v", err)
 	}
 
-	repository := &PostgresRepository{queries: sqlc.New(transaction)}
-	newStatus := StatusClosed
+	repository := newPostgresRepository(transaction)
+	newStatus := StatusInProgress
 	updated, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
 		VisitID: created.ID,
 		Status:  &newStatus,
@@ -586,7 +877,7 @@ func TestUpdateAndDeleteVisit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create invalid time range savepoint: %v", err)
 	}
-	invalidTimeRepository := &PostgresRepository{queries: sqlc.New(invalidTimeTransaction)}
+	invalidTimeRepository := newPostgresRepository(invalidTimeTransaction)
 	_, updateErr := invalidTimeRepository.UpdateVisit(ctx, UpdateVisitRequest{
 		VisitID:        created.ID,
 		VisitStartTime: &invalidStartTime,
@@ -603,7 +894,7 @@ func TestUpdateAndDeleteVisit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create doctor-clinic mismatch savepoint: %v", err)
 	}
-	mismatchRepository := &PostgresRepository{queries: sqlc.New(mismatchTransaction)}
+	mismatchRepository := newPostgresRepository(mismatchTransaction)
 	_, updateErr = mismatchRepository.UpdateVisit(ctx, UpdateVisitRequest{
 		VisitID:  created.ID,
 		ClinicID: &otherClinic,
