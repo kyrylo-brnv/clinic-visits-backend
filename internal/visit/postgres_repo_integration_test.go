@@ -220,6 +220,349 @@ func TestCreateVisitRollsBackWhenOutboxInsertFails(t *testing.T) {
 	assertNoVisitOrEvent(t, transaction, doctorID, patientID)
 }
 
+func TestUpdateVisitPersistsOneUpdatedOutboxEventPerMutation(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	created := createOutboxVisitFixture(
+		t,
+		transaction,
+		time.Now().UTC().Add(10*24*time.Hour).Truncate(time.Microsecond),
+	)
+	repository := newPostgresRepository(transaction)
+
+	newEndTime := created.VisitEndTime.Time.Add(time.Hour)
+	timeUpdated, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID:      created.ID,
+		VisitEndTime: &newEndTime,
+	})
+	if err != nil {
+		t.Fatalf("update visit time: %v", err)
+	}
+
+	newStatus := StatusInProgress
+	statusUpdated, err := repository.UpdateVisit(ctx, UpdateVisitRequest{
+		VisitID: created.ID,
+		Status:  &newStatus,
+	})
+	if err != nil {
+		t.Fatalf("update visit status: %v", err)
+	}
+
+	rows, err := transaction.Query(
+		ctx,
+		`SELECT aggregate_type, aggregate_id::text, event_type, payload, processed_at
+		 FROM outbox_events
+		 WHERE aggregate_id = $1 AND event_type = 'visit.updated'`,
+		created.ID,
+	)
+	if err != nil {
+		t.Fatalf("query visit updated events: %v", err)
+	}
+	defer rows.Close()
+
+	expectedByStatus := map[string]Visit{
+		timeUpdated.Status:   timeUpdated,
+		statusUpdated.Status: statusUpdated,
+	}
+	seenStatuses := make(map[string]bool, len(expectedByStatus))
+	eventCount := 0
+	for rows.Next() {
+		var aggregateType, aggregateID, eventType string
+		var payload []byte
+		var processedAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&aggregateType,
+			&aggregateID,
+			&eventType,
+			&payload,
+			&processedAt,
+		); err != nil {
+			t.Fatalf("scan visit updated event: %v", err)
+		}
+
+		if aggregateType != "visit" || aggregateID != created.ID || eventType != "visit.updated" {
+			t.Fatalf(
+				"unexpected event association: aggregate_type=%q aggregate_id=%q event_type=%q",
+				aggregateType,
+				aggregateID,
+				eventType,
+			)
+		}
+		if processedAt.Valid {
+			t.Fatalf("expected updated event to be pending, got processed_at %v", processedAt.Time)
+		}
+
+		var decoded Visit
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatalf("decode visit updated payload: %v", err)
+		}
+		expected, ok := expectedByStatus[decoded.Status]
+		if !ok || seenStatuses[decoded.Status] {
+			t.Fatalf("unexpected or duplicate updated payload status %q", decoded.Status)
+		}
+		assertVisitSnapshot(t, decoded, expected)
+		seenStatuses[decoded.Status] = true
+		eventCount++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate visit updated events: %v", err)
+	}
+	if eventCount != 2 {
+		t.Fatalf("expected exactly one event for each of two updates, got %d", eventCount)
+	}
+}
+
+func TestUpdateVisitRollsBackWhenOutboxInsertFails(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	created := createOutboxVisitFixture(
+		t,
+		transaction,
+		time.Now().UTC().Add(11*24*time.Hour).Truncate(time.Microsecond),
+	)
+	constraintName := fmt.Sprintf("reject_visit_updated_%d", time.Now().UnixNano())
+	if _, err := transaction.Exec(
+		ctx,
+		fmt.Sprintf(
+			"ALTER TABLE outbox_events ADD CONSTRAINT %s CHECK (event_type <> 'visit.updated') NOT VALID",
+			constraintName,
+		),
+	); err != nil {
+		t.Fatalf("install outbox failure constraint: %v", err)
+	}
+
+	repository := newPostgresRepository(transaction)
+	newEndTime := created.VisitEndTime.Time.Add(time.Hour)
+	newStatus := StatusInProgress
+	requests := []struct {
+		name    string
+		request UpdateVisitRequest
+	}{
+		{
+			name: "non-status update",
+			request: UpdateVisitRequest{
+				VisitID:      created.ID,
+				VisitEndTime: &newEndTime,
+			},
+		},
+		{
+			name: "status update",
+			request: UpdateVisitRequest{
+				VisitID: created.ID,
+				Status:  &newStatus,
+			},
+		},
+	}
+
+	for _, test := range requests {
+		t.Run(test.name, func(t *testing.T) {
+			_, updateErr := repository.UpdateVisit(ctx, test.request)
+			if updateErr == nil || !strings.Contains(updateErr.Error(), "insert visit updated outbox event") {
+				t.Fatalf("expected contextual outbox insert error, got %v", updateErr)
+			}
+
+			var status string
+			var endTime pgtype.Timestamptz
+			var eventCount int64
+			if err := transaction.QueryRow(
+				ctx,
+				`SELECT
+					v.status,
+					v.visit_end_time,
+					(SELECT count(*) FROM outbox_events WHERE aggregate_id = v.id)
+				 FROM visits v
+				 WHERE v.id = $1`,
+				created.ID,
+			).Scan(&status, &endTime, &eventCount); err != nil {
+				t.Fatalf("read visit after failed update: %v", err)
+			}
+			if status != created.Status || !endTime.Time.Equal(created.VisitEndTime.Time) {
+				t.Fatalf(
+					"expected failed update to preserve status %q and end %v, got %q and %v",
+					created.Status,
+					created.VisitEndTime.Time,
+					status,
+					endTime.Time,
+				)
+			}
+			if eventCount != 0 {
+				t.Fatalf("expected no event after failed update, got %d", eventCount)
+			}
+		})
+	}
+}
+
+func TestDeleteVisitPersistsDeletedOutboxEvent(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	created := createOutboxVisitFixture(
+		t,
+		transaction,
+		time.Now().UTC().Add(12*24*time.Hour).Truncate(time.Microsecond),
+	)
+	if err := newPostgresRepository(transaction).DeleteVisit(
+		ctx,
+		DeleteVisitRequest{VisitID: created.ID},
+	); err != nil {
+		t.Fatalf("delete visit: %v", err)
+	}
+
+	var aggregateType, aggregateID, eventType string
+	var payload []byte
+	var processedAt pgtype.Timestamptz
+	var visitCount, eventCount int64
+	if err := transaction.QueryRow(
+		ctx,
+		`SELECT
+			e.aggregate_type,
+			e.aggregate_id::text,
+			e.event_type,
+			e.payload,
+			e.processed_at,
+			(SELECT count(*) FROM visits WHERE id = $1),
+			count(*) OVER ()
+		 FROM outbox_events e
+		 WHERE e.aggregate_id = $1 AND e.event_type = 'visit.deleted'`,
+		created.ID,
+	).Scan(
+		&aggregateType,
+		&aggregateID,
+		&eventType,
+		&payload,
+		&processedAt,
+		&visitCount,
+		&eventCount,
+	); err != nil {
+		t.Fatalf("read visit deleted event: %v", err)
+	}
+	if visitCount != 0 || eventCount != 1 {
+		t.Fatalf("expected deleted visit and exactly one event, got %d visits and %d events", visitCount, eventCount)
+	}
+	if aggregateType != "visit" || aggregateID != created.ID || eventType != "visit.deleted" {
+		t.Fatalf(
+			"unexpected event association: aggregate_type=%q aggregate_id=%q event_type=%q",
+			aggregateType,
+			aggregateID,
+			eventType,
+		)
+	}
+	if processedAt.Valid {
+		t.Fatalf("expected deleted event to be pending, got processed_at %v", processedAt.Time)
+	}
+
+	var decoded Visit
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode visit deleted payload: %v", err)
+	}
+	assertVisitSnapshot(t, decoded, mapCreatedVisitRow(created))
+}
+
+func TestDeleteVisitRollsBackWhenOutboxInsertFails(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	defer connection.Close(ctx)
+
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	created := createOutboxVisitFixture(
+		t,
+		transaction,
+		time.Now().UTC().Add(13*24*time.Hour).Truncate(time.Microsecond),
+	)
+	constraintName := fmt.Sprintf("reject_visit_deleted_%d", time.Now().UnixNano())
+	if _, err := transaction.Exec(
+		ctx,
+		fmt.Sprintf(
+			"ALTER TABLE outbox_events ADD CONSTRAINT %s CHECK (event_type <> 'visit.deleted') NOT VALID",
+			constraintName,
+		),
+	); err != nil {
+		t.Fatalf("install outbox failure constraint: %v", err)
+	}
+
+	deleteErr := newPostgresRepository(transaction).DeleteVisit(
+		ctx,
+		DeleteVisitRequest{VisitID: created.ID},
+	)
+	if deleteErr == nil || !strings.Contains(deleteErr.Error(), "insert visit deleted outbox event") {
+		t.Fatalf("expected contextual outbox insert error, got %v", deleteErr)
+	}
+
+	var visitCount, eventCount int64
+	if err := transaction.QueryRow(
+		ctx,
+		`SELECT
+			(SELECT count(*) FROM visits WHERE id = $1),
+			(SELECT count(*) FROM outbox_events WHERE aggregate_id = $1)`,
+		created.ID,
+	).Scan(&visitCount, &eventCount); err != nil {
+		t.Fatalf("count visit and outbox events after failed deletion: %v", err)
+	}
+	if visitCount != 1 || eventCount != 0 {
+		t.Fatalf("expected deletion rollback with no event, got %d visits and %d events", visitCount, eventCount)
+	}
+}
+
 func TestCreateVisitRejectsDoctorFromAnotherClinic(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -1202,6 +1545,58 @@ func createVisitScheduleFixtures(
 	}
 
 	return doctorID, firstPatientID, secondPatientID, clinicID
+}
+
+func createOutboxVisitFixture(
+	t *testing.T,
+	transaction pgx.Tx,
+	startTime time.Time,
+) sqlc.CreateVisitRow {
+	t.Helper()
+
+	doctorID, patientID, _, clinicID := createVisitScheduleFixtures(t, transaction)
+	created, err := sqlc.New(transaction).CreateVisit(t.Context(), sqlc.CreateVisitParams{
+		DoctorID:       doctorID,
+		PatientID:      patientID,
+		ClinicID:       clinicID,
+		VisitStartTime: pgtype.Timestamptz{Time: startTime, Valid: true},
+		VisitEndTime:   pgtype.Timestamptz{Time: startTime.Add(time.Hour), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create outbox visit fixture: %v", err)
+	}
+
+	return created
+}
+
+func mapCreatedVisitRow(row sqlc.CreateVisitRow) Visit {
+	return Visit{
+		ID:             row.ID,
+		DoctorID:       row.DoctorID,
+		PatientID:      row.PatientID,
+		ClinicID:       row.ClinicID,
+		Status:         row.Status,
+		VisitStartTime: row.VisitStartTime.Time,
+		VisitEndTime:   row.VisitEndTime.Time,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}
+}
+
+func assertVisitSnapshot(t *testing.T, actual Visit, expected Visit) {
+	t.Helper()
+
+	if actual.ID != expected.ID ||
+		actual.DoctorID != expected.DoctorID ||
+		actual.PatientID != expected.PatientID ||
+		actual.ClinicID != expected.ClinicID ||
+		actual.Status != expected.Status ||
+		!actual.VisitStartTime.Equal(expected.VisitStartTime) ||
+		!actual.VisitEndTime.Equal(expected.VisitEndTime) ||
+		!actual.CreatedAt.Equal(expected.CreatedAt) ||
+		!actual.UpdatedAt.Equal(expected.UpdatedAt) {
+		t.Fatalf("expected visit snapshot %+v, got %+v", expected, actual)
+	}
 }
 
 func createPatientScheduleFixtures(

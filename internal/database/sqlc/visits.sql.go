@@ -84,14 +84,45 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (Creat
 const deleteVisit = `-- name: DeleteVisit :one
 DELETE FROM visits
 WHERE id = $1
-RETURNING id::text
+RETURNING
+    id::text AS id,
+    doctor_id::text AS doctor_id,
+    patient_id::text AS patient_id,
+    clinic_id::text AS clinic_id,
+    status,
+    visit_start_time,
+    visit_end_time,
+    created_at,
+    updated_at
 `
 
-func (q *Queries) DeleteVisit(ctx context.Context, visitID pgtype.UUID) (string, error) {
+type DeleteVisitRow struct {
+	ID             string
+	DoctorID       string
+	PatientID      string
+	ClinicID       string
+	Status         string
+	VisitStartTime pgtype.Timestamptz
+	VisitEndTime   pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) DeleteVisit(ctx context.Context, visitID pgtype.UUID) (DeleteVisitRow, error) {
 	row := q.db.QueryRow(ctx, deleteVisit, visitID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var i DeleteVisitRow
+	err := row.Scan(
+		&i.ID,
+		&i.DoctorID,
+		&i.PatientID,
+		&i.ClinicID,
+		&i.Status,
+		&i.VisitStartTime,
+		&i.VisitEndTime,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getVisitStatusForUpdate = `-- name: GetVisitStatusForUpdate :one
