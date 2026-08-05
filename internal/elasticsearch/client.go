@@ -1,6 +1,7 @@
 package elasticsearch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -208,6 +209,39 @@ func (c *Client) Initialize(ctx context.Context) error {
 	return nil
 }
 
+// UpsertDocument creates or replaces one document in an Elasticsearch index.
+func (c *Client) UpsertDocument(ctx context.Context, indexName, documentID string, document any) error {
+	if strings.TrimSpace(indexName) == "" {
+		return fmt.Errorf("elasticsearch index name must not be blank")
+	}
+	if strings.TrimSpace(documentID) == "" {
+		return fmt.Errorf("elasticsearch document ID must not be blank")
+	}
+
+	body, err := json.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("marshal document for Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+
+	request, err := c.newDocumentRequest(ctx, indexName, documentID, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create document upsert request for Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("upsert document in Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("upsert document in Elasticsearch index %q with ID %q: unexpected response status %s", indexName, documentID, response.Status)
+	}
+
+	return nil
+}
+
 func (c *Client) checkHealth(ctx context.Context) error {
 	request, err := c.newRequest(ctx, http.MethodGet, "/_cluster/health", nil)
 	if err != nil {
@@ -307,6 +341,19 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 	endpoint.Path = path
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	return request, nil
+}
+
+func (c *Client) newDocumentRequest(ctx context.Context, indexName, documentID string, body io.Reader) (*http.Request, error) {
+	endpoint := *c.baseURL
+	endpoint.Path = "/" + indexName + "/_doc/" + documentID
+	endpoint.RawPath = "/" + url.PathEscape(indexName) + "/_doc/" + url.PathEscape(documentID)
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

@@ -3,6 +3,8 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +19,137 @@ func TestNewClientRejectsInvalidURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("NewClient() error = nil, want invalid URL error")
 	}
+}
+
+func TestUpsertDocument(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusCreated, http.StatusNoContent} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodPut {
+					t.Errorf("request method = %q, want %q", request.Method, http.MethodPut)
+				}
+				if request.URL.Path != "/test-index/_doc/document-1" {
+					t.Errorf("request path = %q, want %q", request.URL.Path, "/test-index/_doc/document-1")
+				}
+				if contentType := request.Header.Get("Content-Type"); contentType != "application/json" {
+					t.Errorf("Content-Type = %q, want application/json", contentType)
+				}
+
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Errorf("read request body: %v", err)
+				}
+				if string(body) != `{"name":"Ada"}` {
+					t.Errorf("request body = %s, want %s", body, `{"name":"Ada"}`)
+				}
+				response.WriteHeader(status)
+			}))
+			defer server.Close()
+
+			client, err := NewClient(&config.ElasticsearchConfig{URL: server.URL})
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			if err := client.UpsertDocument(t.Context(), "test-index", "document-1", map[string]string{"name": "Ada"}); err != nil {
+				t.Fatalf("UpsertDocument() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestUpsertDocumentEscapesPathSegments(t *testing.T) {
+	const expectedPath = "/test%2Findex/_doc/document%2F1"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.RequestURI != expectedPath {
+			t.Errorf("request URI = %q, want %q", request.RequestURI, expectedPath)
+		}
+		if request.URL.EscapedPath() != expectedPath {
+			t.Errorf("escaped request path = %q, want %q", request.URL.EscapedPath(), expectedPath)
+		}
+		response.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(&config.ElasticsearchConfig{URL: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	if err := client.UpsertDocument(t.Context(), "test/index", "document/1", map[string]string{}); err != nil {
+		t.Fatalf("UpsertDocument() error = %v", err)
+	}
+}
+
+func TestUpsertDocumentRejectsInvalidInput(t *testing.T) {
+	client, err := NewClient(&config.ElasticsearchConfig{URL: "http://localhost:9200"})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		indexName  string
+		documentID string
+		document   any
+		wantError  string
+	}{
+		{name: "blank index", documentID: "document-1", document: map[string]string{}, wantError: "elasticsearch index name must not be blank"},
+		{name: "blank document ID", indexName: "test-index", document: map[string]string{}, wantError: "elasticsearch document ID must not be blank"},
+		{name: "marshal failure", indexName: "test-index", documentID: "document-1", document: make(chan int), wantError: `marshal document for Elasticsearch index "test-index" with ID "document-1"`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := client.UpsertDocument(t.Context(), test.indexName, test.documentID, test.document)
+			if err == nil {
+				t.Fatal("UpsertDocument() error = nil, want validation or marshal error")
+			}
+			if !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("UpsertDocument() error = %q, want %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestUpsertDocumentReportsRequestAndStatusFailures(t *testing.T) {
+	client, err := NewClient(&config.ElasticsearchConfig{URL: "http://localhost:9200"})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	client.httpClient = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})}
+
+	err = client.UpsertDocument(t.Context(), "test-index", "document-1", map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), `upsert document in Elasticsearch index "test-index" with ID "document-1": Put "http://localhost:9200/test-index/_doc/document-1": connection refused`) {
+		t.Fatalf("UpsertDocument() request error = %q", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = response.Write([]byte(`{"error":"PHI-SENTINEL"}`))
+	}))
+	defer server.Close()
+
+	client, err = NewClient(&config.ElasticsearchConfig{URL: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	err = client.UpsertDocument(t.Context(), "test-index", "document-1", map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), `upsert document in Elasticsearch index "test-index" with ID "document-1": unexpected response status 400 Bad Request`) {
+		t.Fatalf("UpsertDocument() status error = %q", err)
+	}
+	if strings.Contains(err.Error(), "PHI-SENTINEL") {
+		t.Fatalf("UpsertDocument() status error contains response body: %q", err)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func TestInitializeCreatesVersionedIndicesIdempotently(t *testing.T) {
