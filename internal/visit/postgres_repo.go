@@ -54,7 +54,14 @@ func (r *PostgresRepository) CreateVisit(
 		return Visit{}, fmt.Errorf("invalid clinic ID: %w", err)
 	}
 
-	row, err := r.queries.CreateVisit(ctx, sqlc.CreateVisitParams{
+	transaction, err := r.database.Begin(ctx)
+	if err != nil {
+		return Visit{}, fmt.Errorf("begin visit creation transaction: %w", err)
+	}
+	defer transaction.Rollback(ctx)
+
+	queries := r.queries.WithTx(transaction)
+	row, err := queries.CreateVisit(ctx, sqlc.CreateVisitParams{
 		DoctorID:       doctorID,
 		PatientID:      patientID,
 		ClinicID:       clinicID,
@@ -65,7 +72,7 @@ func (r *PostgresRepository) CreateVisit(
 		return Visit{}, mapCreateVisitError(err)
 	}
 
-	return Visit{
+	createdVisit := Visit{
 		ID:             row.ID,
 		DoctorID:       row.DoctorID,
 		PatientID:      row.PatientID,
@@ -75,7 +82,32 @@ func (r *PostgresRepository) CreateVisit(
 		VisitEndTime:   row.VisitEndTime.Time,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
-	}, nil
+	}
+
+	event, err := newCreatedEvent(createdVisit)
+	if err != nil {
+		return Visit{}, fmt.Errorf("create visit created outbox event: %w", err)
+	}
+
+	aggregateID, err := uuid.Parse(event.AggregateID)
+	if err != nil {
+		return Visit{}, fmt.Errorf("parse visit created outbox aggregate ID: %w", err)
+	}
+
+	if err := queries.CreateOutboxEvent(ctx, sqlc.CreateOutboxEventParams{
+		AggregateType: event.AggregateType,
+		AggregateID:   aggregateID,
+		EventType:     event.EventType,
+		Payload:       event.Payload,
+	}); err != nil {
+		return Visit{}, fmt.Errorf("insert visit created outbox event: %w", err)
+	}
+
+	if err := transaction.Commit(ctx); err != nil {
+		return Visit{}, fmt.Errorf("commit visit creation transaction: %w", err)
+	}
+
+	return createdVisit, nil
 }
 
 func (r *PostgresRepository) ListVisits(
