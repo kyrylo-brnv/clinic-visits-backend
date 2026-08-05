@@ -223,7 +223,7 @@ func (c *Client) UpsertDocument(ctx context.Context, indexName, documentID strin
 		return fmt.Errorf("marshal document for Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
 	}
 
-	request, err := c.newDocumentRequest(ctx, indexName, documentID, bytes.NewReader(body))
+	request, err := c.newDocumentRequest(ctx, http.MethodPut, indexName, documentID, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create document upsert request for Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
 	}
@@ -237,6 +237,84 @@ func (c *Client) UpsertDocument(ctx context.Context, indexName, documentID strin
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("upsert document in Elasticsearch index %q with ID %q: unexpected response status %s", indexName, documentID, response.Status)
+	}
+
+	return nil
+}
+
+// GetDocument loads one document source from an Elasticsearch index. A missing
+// document is reported as found=false without an error.
+func (c *Client) GetDocument(ctx context.Context, indexName, documentID string, document any) (bool, error) {
+	if strings.TrimSpace(indexName) == "" {
+		return false, fmt.Errorf("elasticsearch index name must not be blank")
+	}
+	if strings.TrimSpace(documentID) == "" {
+		return false, fmt.Errorf("elasticsearch document ID must not be blank")
+	}
+	if document == nil {
+		return false, fmt.Errorf("elasticsearch document destination must not be nil")
+	}
+
+	request, err := c.newDocumentRequest(ctx, http.MethodGet, indexName, documentID, nil)
+	if err != nil {
+		return false, fmt.Errorf("create document get request for Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("get document from Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return false, fmt.Errorf("get document from Elasticsearch index %q with ID %q: unexpected response status %s", indexName, documentID, response.Status)
+	}
+
+	var result struct {
+		Source json.RawMessage `json:"_source"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("decode document from Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+	if len(result.Source) == 0 {
+		return false, fmt.Errorf("decode document from Elasticsearch index %q with ID %q: response is missing _source", indexName, documentID)
+	}
+	if err := json.Unmarshal(result.Source, document); err != nil {
+		return false, fmt.Errorf("decode document source from Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+
+	return true, nil
+}
+
+// DeleteDocument removes one document from an Elasticsearch index. Deleting an
+// already missing document succeeds so outbox retries remain idempotent.
+func (c *Client) DeleteDocument(ctx context.Context, indexName, documentID string) error {
+	if strings.TrimSpace(indexName) == "" {
+		return fmt.Errorf("elasticsearch index name must not be blank")
+	}
+	if strings.TrimSpace(documentID) == "" {
+		return fmt.Errorf("elasticsearch document ID must not be blank")
+	}
+
+	request, err := c.newDocumentRequest(ctx, http.MethodDelete, indexName, documentID, nil)
+	if err != nil {
+		return fmt.Errorf("create document delete request for Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("delete document from Elasticsearch index %q with ID %q: %w", indexName, documentID, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("delete document from Elasticsearch index %q with ID %q: unexpected response status %s", indexName, documentID, response.Status)
 	}
 
 	return nil
@@ -348,12 +426,12 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 	return request, nil
 }
 
-func (c *Client) newDocumentRequest(ctx context.Context, indexName, documentID string, body io.Reader) (*http.Request, error) {
+func (c *Client) newDocumentRequest(ctx context.Context, method, indexName, documentID string, body io.Reader) (*http.Request, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = "/" + indexName + "/_doc/" + documentID
 	endpoint.RawPath = "/" + url.PathEscape(indexName) + "/_doc/" + url.PathEscape(documentID)
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), body)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
