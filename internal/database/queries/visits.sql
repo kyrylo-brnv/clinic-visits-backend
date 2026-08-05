@@ -53,6 +53,7 @@ SET
     clinic_id = COALESCE(sqlc.narg('clinic_id'), clinic_id),
     visit_start_time = COALESCE(sqlc.narg('visit_start_time'), visit_start_time),
     visit_end_time = COALESCE(sqlc.narg('visit_end_time'), visit_end_time),
+    status = COALESCE(sqlc.narg('status'), status),
     updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg('visit_id')
 RETURNING

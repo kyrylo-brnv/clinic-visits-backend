@@ -166,8 +166,9 @@ SET
     clinic_id = COALESCE($3, clinic_id),
     visit_start_time = COALESCE($4, visit_start_time),
     visit_end_time = COALESCE($5, visit_end_time),
+    status = COALESCE($6, status),
     updated_at = CURRENT_TIMESTAMP
-WHERE id = $6
+WHERE id = $7
 RETURNING
     id::text AS id,
     doctor_id::text AS doctor_id,
@@ -186,6 +187,7 @@ type UpdateVisitParams struct {
 	ClinicID       pgtype.UUID
 	VisitStartTime pgtype.Timestamptz
 	VisitEndTime   pgtype.Timestamptz
+	Status         pgtype.Text
 	VisitID        pgtype.UUID
 }
 
@@ -208,6 +210,7 @@ func (q *Queries) UpdateVisit(ctx context.Context, arg UpdateVisitParams) (Updat
 		arg.ClinicID,
 		arg.VisitStartTime,
 		arg.VisitEndTime,
+		arg.Status,
 		arg.VisitID,
 	)
 	var i UpdateVisitRow

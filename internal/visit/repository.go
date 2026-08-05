@@ -42,6 +42,7 @@ type UpdateVisitRequest struct {
 	ClinicID       *string    `json:"clinic_id"`
 	VisitStartTime *time.Time `json:"visit_start_time"`
 	VisitEndTime   *time.Time `json:"visit_end_time"`
+	Status         *string    `json:"status"`
 }
 
 func (r UpdateVisitRequest) HasChanges() bool {
@@ -49,7 +50,8 @@ func (r UpdateVisitRequest) HasChanges() bool {
 		r.PatientID != nil ||
 		r.ClinicID != nil ||
 		r.VisitStartTime != nil ||
-		r.VisitEndTime != nil
+		r.VisitEndTime != nil ||
+		r.Status != nil
 }
 
 type Repository interface {
