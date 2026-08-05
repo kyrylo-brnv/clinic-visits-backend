@@ -13,6 +13,10 @@ type DatabaseConfig struct {
 	SSLMode  string `json:"ssl_mode" env:"DB_SSLMODE"`
 }
 
+type ElasticsearchConfig struct {
+	URL string `json:"url" env:"ELASTICSEARCH_URL"`
+}
+
 func LoadAppServerConfig() (*AppServerConfig, error) {
 	httpPort, err := requiredIntConfig("HTTP_PORT")
 	if err != nil {
@@ -61,4 +65,13 @@ func LoadDatabaseConfig() (*DatabaseConfig, error) {
 		Name:     name,
 		SSLMode:  sslMode,
 	}, nil
+}
+
+func LoadElasticsearchConfig() (*ElasticsearchConfig, error) {
+	url, err := requiredConfig("ELASTICSEARCH_URL")
+	if err != nil {
+		return nil, err
+	}
+
+	return &ElasticsearchConfig{URL: url}, nil
 }
