@@ -54,4 +54,5 @@ type Visit struct {
 	VisitEndTime   pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	Status         string
 }

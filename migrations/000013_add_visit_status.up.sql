@@ -1,0 +1,13 @@
+ALTER TABLE visits
+ADD COLUMN status TEXT DEFAULT 'SCHEDULED';
+
+UPDATE visits
+SET status = 'SCHEDULED'
+WHERE status IS NULL;
+
+ALTER TABLE visits
+ALTER COLUMN status SET NOT NULL;
+
+ALTER TABLE visits
+ADD CONSTRAINT visits_status_check
+CHECK (status IN ('SCHEDULED', 'IN_PROGRESS', 'CLOSED', 'CANCELED'));

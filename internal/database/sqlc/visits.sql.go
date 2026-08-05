@@ -31,6 +31,7 @@ RETURNING
     doctor_id::text AS doctor_id,
     patient_id::text AS patient_id,
     clinic_id::text AS clinic_id,
+    status,
     visit_start_time,
     visit_end_time,
     created_at,
@@ -50,6 +51,7 @@ type CreateVisitRow struct {
 	DoctorID       string
 	PatientID      string
 	ClinicID       string
+	Status         string
 	VisitStartTime pgtype.Timestamptz
 	VisitEndTime   pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
@@ -70,6 +72,7 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (Creat
 		&i.DoctorID,
 		&i.PatientID,
 		&i.ClinicID,
+		&i.Status,
 		&i.VisitStartTime,
 		&i.VisitEndTime,
 		&i.CreatedAt,
@@ -97,6 +100,7 @@ SELECT
     doctor_id::text AS doctor_id,
     patient_id::text AS patient_id,
     clinic_id::text AS clinic_id,
+    status,
     visit_start_time,
     visit_end_time,
     created_at,
@@ -117,6 +121,7 @@ type ListVisitsRow struct {
 	DoctorID       string
 	PatientID      string
 	ClinicID       string
+	Status         string
 	VisitStartTime pgtype.Timestamptz
 	VisitEndTime   pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
@@ -137,6 +142,7 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 			&i.DoctorID,
 			&i.PatientID,
 			&i.ClinicID,
+			&i.Status,
 			&i.VisitStartTime,
 			&i.VisitEndTime,
 			&i.CreatedAt,
@@ -167,6 +173,7 @@ RETURNING
     doctor_id::text AS doctor_id,
     patient_id::text AS patient_id,
     clinic_id::text AS clinic_id,
+    status,
     visit_start_time,
     visit_end_time,
     created_at,
@@ -187,6 +194,7 @@ type UpdateVisitRow struct {
 	DoctorID       string
 	PatientID      string
 	ClinicID       string
+	Status         string
 	VisitStartTime pgtype.Timestamptz
 	VisitEndTime   pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
@@ -208,6 +216,7 @@ func (q *Queries) UpdateVisit(ctx context.Context, arg UpdateVisitParams) (Updat
 		&i.DoctorID,
 		&i.PatientID,
 		&i.ClinicID,
+		&i.Status,
 		&i.VisitStartTime,
 		&i.VisitEndTime,
 		&i.CreatedAt,

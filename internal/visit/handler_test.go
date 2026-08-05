@@ -91,6 +91,7 @@ func TestCreateVisitReturnsCreatedVisit(t *testing.T) {
 		DoctorID:       "11111111-1111-4111-8111-111111111111",
 		PatientID:      "22222222-2222-4222-8222-222222222222",
 		ClinicID:       "33333333-3333-4333-8333-333333333333",
+		Status:         "SCHEDULED",
 		VisitStartTime: time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC),
 		VisitEndTime:   time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC),
 		CreatedAt:      createdAt,
@@ -128,6 +129,9 @@ func TestCreateVisitReturnsCreatedVisit(t *testing.T) {
 	}
 	if body.Data.ID != repo.createdVisit.ID {
 		t.Fatalf("expected visit ID %q, got %q", repo.createdVisit.ID, body.Data.ID)
+	}
+	if body.Data.Status != repo.createdVisit.Status {
+		t.Fatalf("expected visit status %q, got %q", repo.createdVisit.Status, body.Data.Status)
 	}
 }
 
@@ -244,6 +248,7 @@ func TestListVisitsReturnsVisitsAndForwardsPagination(t *testing.T) {
 		DoctorID:       "11111111-1111-4111-8111-111111111111",
 		PatientID:      "22222222-2222-4222-8222-222222222222",
 		ClinicID:       "33333333-3333-4333-8333-333333333333",
+		Status:         "IN_PROGRESS",
 		VisitStartTime: time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC),
 		VisitEndTime:   time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC),
 	}}}
@@ -286,6 +291,9 @@ func TestListVisitsReturnsVisitsAndForwardsPagination(t *testing.T) {
 	}
 	if len(body.Data) != 1 || body.Data[0].ID != repo.listedVisits[0].ID {
 		t.Fatalf("expected listed visit %q, got %+v", repo.listedVisits[0].ID, body.Data)
+	}
+	if body.Data[0].Status != repo.listedVisits[0].Status {
+		t.Fatalf("expected listed visit status %q, got %q", repo.listedVisits[0].Status, body.Data[0].Status)
 	}
 }
 
@@ -524,6 +532,7 @@ func TestUpdateVisitReturnsUpdatedVisitAndPreservesOmittedFields(t *testing.T) {
 		DoctorID:     "11111111-1111-4111-8111-111111111111",
 		PatientID:    "22222222-2222-4222-8222-222222222222",
 		ClinicID:     "33333333-3333-4333-8333-333333333333",
+		Status:       "CLOSED",
 		VisitEndTime: time.Date(2026, time.August, 5, 11, 0, 0, 0, time.UTC),
 	}}
 	handler := NewHandler(repo)
@@ -553,6 +562,9 @@ func TestUpdateVisitReturnsUpdatedVisitAndPreservesOmittedFields(t *testing.T) {
 	}
 	if body.Data.ID != repo.updatedVisit.ID {
 		t.Fatalf("expected visit ID %q, got %q", repo.updatedVisit.ID, body.Data.ID)
+	}
+	if body.Data.Status != repo.updatedVisit.Status {
+		t.Fatalf("expected visit status %q, got %q", repo.updatedVisit.Status, body.Data.Status)
 	}
 }
 
