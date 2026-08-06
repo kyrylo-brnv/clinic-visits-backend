@@ -35,7 +35,7 @@ func TestBuildBackfillDocumentsEnrichesEveryDocument(t *testing.T) {
 		patients: []sqlc.ListPatientsForElasticsearchBackfillRow{
 			{
 				ID: "patient-1", FirstName: "Linus", LastName: "Pauling", DateOfBirth: dateValue(dateOfBirth),
-				Gender: "Male", IsDeleted: true, CreatedAt: timestampValue(createdAt), UpdatedAt: timestampValue(updatedAt),
+				Gender: "Male", IsDeleted: boolValue(true), CreatedAt: timestampValue(createdAt), UpdatedAt: timestampValue(updatedAt),
 			},
 			{
 				ID: "patient-2", FirstName: "Katherine", LastName: "Johnson", DateOfBirth: dateValue(dateOfBirth),
@@ -59,7 +59,7 @@ func TestBuildBackfillDocumentsEnrichesEveryDocument(t *testing.T) {
 				CreatedAt: timestampValue(createdAt), UpdatedAt: timestampValue(updatedAt),
 				DoctorSpecialtyID: "specialty-1", DoctorClinicID: "clinic-1", DoctorFullName: "Ada Lovelace",
 				PatientFirstName: "Linus", PatientLastName: "Pauling", PatientDateOfBirth: dateValue(dateOfBirth),
-				PatientGender: "Male", PatientIsDeleted: true,
+				PatientGender: "Male", PatientIsDeleted: boolValue(true),
 				ClinicName: "Central", ClinicAddress: "1 Main Street", ClinicTimeZone: "Europe/Kyiv",
 			},
 		},
@@ -86,7 +86,7 @@ func TestBuildBackfillDocumentsEnrichesEveryDocument(t *testing.T) {
 		patients: []PatientDocument{
 			{
 				ID: "patient-1", FirstName: "Linus", LastName: "Pauling", DateOfBirth: dateOfBirth, Gender: "Male",
-				IsDeleted: true, CreatedAt: createdAt, UpdatedAt: updatedAt, Visits: []VisitSummary{summary},
+				IsDeleted: boolPointer(true), CreatedAt: createdAt, UpdatedAt: updatedAt, Visits: []VisitSummary{summary},
 			},
 			{
 				ID: "patient-2", FirstName: "Katherine", LastName: "Johnson", DateOfBirth: dateOfBirth, Gender: "Female",
@@ -112,7 +112,7 @@ func TestBuildBackfillDocumentsEnrichesEveryDocument(t *testing.T) {
 				},
 				Patient: VisitPatientData{
 					ID: "patient-1", FirstName: "Linus", LastName: "Pauling", DateOfBirth: dateOfBirth,
-					Gender: "Male", IsDeleted: true,
+					Gender: "Male", IsDeleted: boolPointer(true),
 				},
 				Clinic: VisitClinicData{
 					ID: "clinic-1", Name: "Central", Address: "1 Main Street", TimeZone: "Europe/Kyiv",
@@ -145,6 +145,24 @@ func TestBuildBackfillDocumentsRejectsNullRequiredValues(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "doctor doctor-1 has null created_at") {
 		t.Fatalf("buildBackfillDocuments() error = %v", err)
+	}
+}
+
+func TestBuildBackfillDocumentsPreservesNullPatientDeletionStatus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC)
+	documents, err := buildBackfillDocuments(backfillRows{
+		patients: []sqlc.ListPatientsForElasticsearchBackfillRow{{
+			ID: "patient-1", FirstName: "Ada", LastName: "Lovelace", DateOfBirth: dateValue(now), Gender: "Female",
+			CreatedAt: timestampValue(now), UpdatedAt: timestampValue(now),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("buildBackfillDocuments() error = %v", err)
+	}
+	if documents.patients[0].IsDeleted != nil {
+		t.Fatalf("patient is_deleted = %v, want nil for a NULL database value", *documents.patients[0].IsDeleted)
 	}
 }
 
@@ -220,4 +238,12 @@ func timestampValue(value time.Time) pgtype.Timestamptz {
 
 func dateValue(value time.Time) pgtype.Date {
 	return pgtype.Date{Time: value, Valid: true}
+}
+
+func boolValue(value bool) pgtype.Bool {
+	return pgtype.Bool{Bool: value, Valid: true}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

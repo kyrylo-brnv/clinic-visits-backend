@@ -16,7 +16,7 @@ SELECT
     p.last_name AS patient_last_name,
     p.date_of_birth AS patient_date_of_birth,
     p.gender AS patient_gender,
-    COALESCE(p.is_deleted, false) AS patient_is_deleted,
+    p.is_deleted AS patient_is_deleted,
     c.name AS clinic_name,
     c.address AS clinic_address,
     c.time_zone AS clinic_time_zone
@@ -45,7 +45,7 @@ SELECT
     last_name,
     date_of_birth,
     gender,
-    COALESCE(is_deleted, false) AS is_deleted,
+    is_deleted,
     created_at,
     updated_at
 FROM patients

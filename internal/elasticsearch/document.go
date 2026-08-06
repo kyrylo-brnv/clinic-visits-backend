@@ -20,7 +20,7 @@ type PatientDocument struct {
 	LastName    string         `json:"last_name"`
 	DateOfBirth time.Time      `json:"date_of_birth"`
 	Gender      string         `json:"gender"`
-	IsDeleted   bool           `json:"is_deleted"`
+	IsDeleted   *bool          `json:"is_deleted"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	Visits      []VisitSummary `json:"visits"`
@@ -81,7 +81,7 @@ type VisitPatientData struct {
 	LastName    string    `json:"last_name"`
 	DateOfBirth time.Time `json:"date_of_birth"`
 	Gender      string    `json:"gender"`
-	IsDeleted   bool      `json:"is_deleted"`
+	IsDeleted   *bool     `json:"is_deleted"`
 }
 
 // VisitClinicData contains the clinic fields mapped within a visit document.

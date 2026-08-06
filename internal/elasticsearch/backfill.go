@@ -143,7 +143,7 @@ func buildBackfillDocuments(rows backfillRows) (backfillDocuments, error) {
 			LastName:    row.LastName,
 			DateOfBirth: dateOfBirth,
 			Gender:      row.Gender,
-			IsDeleted:   row.IsDeleted,
+			IsDeleted:   nullableBool(row.IsDeleted),
 			CreatedAt:   createdAt,
 			UpdatedAt:   updatedAt,
 			Visits:      make([]VisitSummary, 0),
@@ -244,7 +244,7 @@ func buildBackfillDocuments(rows backfillRows) (backfillDocuments, error) {
 				LastName:    row.PatientLastName,
 				DateOfBirth: patientDateOfBirth,
 				Gender:      row.PatientGender,
-				IsDeleted:   row.PatientIsDeleted,
+				IsDeleted:   nullableBool(row.PatientIsDeleted),
 			},
 			Clinic: VisitClinicData{
 				ID:       row.ClinicID,
@@ -297,4 +297,12 @@ func requiredDate(entity, id, field string, value pgtype.Date) (time.Time, error
 	}
 
 	return value.Time, nil
+}
+
+func nullableBool(value pgtype.Bool) *bool {
+	if !value.Valid {
+		return nil
+	}
+
+	return &value.Bool
 }

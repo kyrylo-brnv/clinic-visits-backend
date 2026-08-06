@@ -125,6 +125,22 @@ func TestVisitEventConsumerDeletesMissingVisitAfterRefreshingRelations(t *testin
 	}
 }
 
+func TestMapSyncPatientDocumentsPreservesNullDeletionStatus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC)
+	documents, err := mapSyncPatientDocuments([]sqlc.ListPatientsForElasticsearchSyncRow{{
+		ID: "patient-1", FirstName: "Ada", LastName: "Lovelace", DateOfBirth: dateValue(now), Gender: "Female",
+		CreatedAt: timestampValue(now), UpdatedAt: timestampValue(now),
+	}})
+	if err != nil {
+		t.Fatalf("mapSyncPatientDocuments() error = %v", err)
+	}
+	if documents["patient-1"].IsDeleted != nil {
+		t.Fatalf("patient is_deleted = %v, want nil for a NULL database value", *documents["patient-1"].IsDeleted)
+	}
+}
+
 func TestVisitEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T) {
 	t.Parallel()
 

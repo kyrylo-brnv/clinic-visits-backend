@@ -114,7 +114,7 @@ SELECT
     last_name,
     date_of_birth,
     gender,
-    COALESCE(is_deleted, false) AS is_deleted,
+    is_deleted,
     created_at,
     updated_at
 FROM patients
@@ -127,7 +127,7 @@ type ListPatientsForElasticsearchBackfillRow struct {
 	LastName    string
 	DateOfBirth pgtype.Date
 	Gender      string
-	IsDeleted   bool
+	IsDeleted   pgtype.Bool
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 }
@@ -179,7 +179,7 @@ SELECT
     p.last_name AS patient_last_name,
     p.date_of_birth AS patient_date_of_birth,
     p.gender AS patient_gender,
-    COALESCE(p.is_deleted, false) AS patient_is_deleted,
+    p.is_deleted AS patient_is_deleted,
     c.name AS clinic_name,
     c.address AS clinic_address,
     c.time_zone AS clinic_time_zone
@@ -207,7 +207,7 @@ type ListVisitsForElasticsearchBackfillRow struct {
 	PatientLastName    string
 	PatientDateOfBirth pgtype.Date
 	PatientGender      string
-	PatientIsDeleted   bool
+	PatientIsDeleted   pgtype.Bool
 	ClinicName         string
 	ClinicAddress      string
 	ClinicTimeZone     string

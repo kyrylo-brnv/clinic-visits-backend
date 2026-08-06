@@ -197,6 +197,82 @@ func TestGetDocumentReturnsSourceAndTreatsMissingAsNotFound(t *testing.T) {
 	}
 }
 
+func TestSearchSendsQueryAndReturnsHitSources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("request method = %q, want %q", request.Method, http.MethodPost)
+		}
+		if request.URL.EscapedPath() != "/patients%2Fv1/_search" {
+			t.Errorf("request path = %q, want %q", request.URL.EscapedPath(), "/patients%2Fv1/_search")
+		}
+		if contentType := request.Header.Get("Content-Type"); contentType != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", contentType)
+		}
+
+		var query map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&query); err != nil {
+			t.Errorf("decode search query: %v", err)
+		}
+		if query["size"] != float64(20) {
+			t.Errorf("search query = %#v, want size 20", query)
+		}
+
+		_, _ = response.Write([]byte(`{"hits":{"hits":[{"_source":{"id":"patient-1"}},{"_source":{"id":"patient-2"}}]}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(&config.ElasticsearchConfig{URL: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	documents, err := client.Search(t.Context(), "patients/v1", map[string]int{"size": 20})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(documents) != 2 || string(documents[0]) != `{"id":"patient-1"}` || string(documents[1]) != `{"id":"patient-2"}` {
+		t.Fatalf("Search() documents = %s, want both hit sources", documents)
+	}
+}
+
+func TestSearchReportsMalformedResponses(t *testing.T) {
+	client, err := NewClient(&config.ElasticsearchConfig{URL: "http://localhost:9200"})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	responses := []*http.Response{
+		{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader(`{"hits":{"hits":[{}]}}`)),
+		},
+		{
+			StatusCode: http.StatusBadGateway,
+			Status:     "502 Bad Gateway",
+			Body:       io.NopCloser(strings.NewReader(`{"error":"PHI-SENTINEL"}`)),
+		},
+	}
+	client.httpClient = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		response := responses[0]
+		responses = responses[1:]
+		return response, nil
+	})}
+
+	_, err = client.Search(t.Context(), "patients-v1", map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), `decode search hit 0 from Elasticsearch index "patients-v1": response is missing _source`) {
+		t.Fatalf("Search() missing source error = %q", err)
+	}
+
+	_, err = client.Search(t.Context(), "patients-v1", map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), `search Elasticsearch index "patients-v1": unexpected response status 502 Bad Gateway`) {
+		t.Fatalf("Search() status error = %q", err)
+	}
+	if strings.Contains(err.Error(), "PHI-SENTINEL") {
+		t.Fatalf("Search() status error contains response body: %q", err)
+	}
+}
+
 func TestDeleteDocumentIsIdempotent(t *testing.T) {
 	client, err := NewClient(&config.ElasticsearchConfig{URL: "http://localhost:9200"})
 	if err != nil {
