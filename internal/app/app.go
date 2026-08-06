@@ -4,14 +4,16 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/smithautotest/clinic-visits/internal/elasticsearch"
 	"github.com/smithautotest/clinic-visits/internal/routes"
 )
 
-func New(pool *pgxpool.Pool) http.Handler {
+func New(pool *pgxpool.Pool, elasticsearchClient *elasticsearch.Client) http.Handler {
 	deps := routes.Dependencies{
-		Patients: newPatientHandler(pool),
-		Doctors:  newDoctorHandler(pool),
-		Visits:   newVisitHandler(pool),
+		Patients:   newPatientHandler(pool),
+		V2Patients: newElasticsearchPatientHandler(elasticsearchClient),
+		Doctors:    newDoctorHandler(pool),
+		Visits:     newVisitHandler(pool),
 	}
 
 	return routes.NewRouter(deps)

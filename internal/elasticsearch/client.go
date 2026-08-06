@@ -289,6 +289,55 @@ func (c *Client) GetDocument(ctx context.Context, indexName, documentID string, 
 	return true, nil
 }
 
+// Search returns the _source value from every hit matching query in indexName.
+func (c *Client) Search(ctx context.Context, indexName string, query any) ([]json.RawMessage, error) {
+	if strings.TrimSpace(indexName) == "" {
+		return nil, fmt.Errorf("elasticsearch index name must not be blank")
+	}
+
+	body, err := json.Marshal(query)
+	if err != nil {
+		return nil, fmt.Errorf("marshal search query for Elasticsearch index %q: %w", indexName, err)
+	}
+
+	request, err := c.newSearchRequest(ctx, indexName, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create search request for Elasticsearch index %q: %w", indexName, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("search Elasticsearch index %q: %w", indexName, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("search Elasticsearch index %q: unexpected response status %s", indexName, response.Status)
+	}
+
+	var result struct {
+		Hits struct {
+			Hits []struct {
+				Source json.RawMessage `json:"_source"`
+			} `json:"hits"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode search response from Elasticsearch index %q: %w", indexName, err)
+	}
+
+	documents := make([]json.RawMessage, 0, len(result.Hits.Hits))
+	for hitIndex, hit := range result.Hits.Hits {
+		if len(hit.Source) == 0 {
+			return nil, fmt.Errorf("decode search hit %d from Elasticsearch index %q: response is missing _source", hitIndex, indexName)
+		}
+		documents = append(documents, hit.Source)
+	}
+
+	return documents, nil
+}
+
 // DeleteDocument removes one document from an Elasticsearch index. Deleting an
 // already missing document succeeds so outbox retries remain idempotent.
 func (c *Client) DeleteDocument(ctx context.Context, indexName, documentID string) error {
@@ -432,6 +481,19 @@ func (c *Client) newDocumentRequest(ctx context.Context, method, indexName, docu
 	endpoint.RawPath = "/" + url.PathEscape(indexName) + "/_doc/" + url.PathEscape(documentID)
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	return request, nil
+}
+
+func (c *Client) newSearchRequest(ctx context.Context, indexName string, body io.Reader) (*http.Request, error) {
+	endpoint := *c.baseURL
+	endpoint.Path = "/" + indexName + "/_search"
+	endpoint.RawPath = "/" + url.PathEscape(indexName) + "/_search"
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

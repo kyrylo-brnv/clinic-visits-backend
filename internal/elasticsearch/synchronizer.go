@@ -326,7 +326,7 @@ func mapSyncPatientDocuments(rows []sqlc.ListPatientsForElasticsearchSyncRow) (m
 		}
 		documents[row.ID] = PatientDocument{
 			ID: row.ID, FirstName: row.FirstName, LastName: row.LastName, DateOfBirth: dateOfBirth,
-			Gender: row.Gender, IsDeleted: row.IsDeleted, CreatedAt: createdAt, UpdatedAt: updatedAt,
+			Gender: row.Gender, IsDeleted: nullableBool(row.IsDeleted), CreatedAt: createdAt, UpdatedAt: updatedAt,
 			Visits: make([]VisitSummary, 0),
 		}
 	}
@@ -423,7 +423,7 @@ func mapSyncVisitDocument(row sqlc.GetVisitForElasticsearchSyncRow) (VisitDocume
 		},
 		Patient: VisitPatientData{
 			ID: row.PatientID, FirstName: row.PatientFirstName, LastName: row.PatientLastName,
-			DateOfBirth: dateOfBirth, Gender: row.PatientGender, IsDeleted: row.PatientIsDeleted,
+			DateOfBirth: dateOfBirth, Gender: row.PatientGender, IsDeleted: nullableBool(row.PatientIsDeleted),
 		},
 		Clinic: VisitClinicData{
 			ID: row.ClinicID, Name: row.ClinicName, Address: row.ClinicAddress, TimeZone: row.ClinicTimeZone,

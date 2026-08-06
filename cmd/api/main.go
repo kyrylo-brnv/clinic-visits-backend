@@ -56,7 +56,7 @@ func main() {
 		log.Fatal("Error backfilling Elasticsearch:", err)
 	}
 
-	router := app.New(pool)
+	router := app.New(pool, elasticsearchClient)
 	address := ":" + strconv.Itoa(appServerConfig.HTTPPort)
 	log.Fatal(http.ListenAndServe(address, router))
 }
