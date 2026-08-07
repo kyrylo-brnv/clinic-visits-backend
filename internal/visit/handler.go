@@ -17,6 +17,11 @@ type Handler struct {
 	repo Repository
 }
 
+// ListHandler handles visit list requests using a read-only repository.
+type ListHandler struct {
+	repo ListRepository
+}
+
 type updateVisitBody struct {
 	VisitID        string                   `json:"visit_id"`
 	DoctorID       optionalField[string]    `json:"doctor_id"`
@@ -55,6 +60,10 @@ func (f optionalField[T]) pointer() *T {
 
 func NewHandler(repo Repository) Handler {
 	return Handler{repo: repo}
+}
+
+func NewListHandler(repo ListRepository) ListHandler {
+	return ListHandler{repo: repo}
 }
 
 func (h Handler) CreateVisit(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +115,14 @@ func (h Handler) CreateVisit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) ListVisits(w http.ResponseWriter, r *http.Request) {
+	listVisits(w, r, h.repo)
+}
+
+func (h ListHandler) ListVisits(w http.ResponseWriter, r *http.Request) {
+	listVisits(w, r, h.repo)
+}
+
+func listVisits(w http.ResponseWriter, r *http.Request, repo ListRepository) {
 	if !httpapi.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -116,7 +133,7 @@ func (h Handler) ListVisits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	visits, err := h.repo.ListVisits(r.Context(), ListVisitsRequest{
+	visits, err := repo.ListVisits(r.Context(), ListVisitsRequest{
 		Pagination: paginationParams,
 	})
 	if err != nil {

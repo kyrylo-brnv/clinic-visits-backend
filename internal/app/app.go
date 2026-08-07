@@ -15,6 +15,7 @@ func New(pool *pgxpool.Pool, elasticsearchClient *elasticsearch.Client) http.Han
 		Doctors:    newDoctorHandler(pool),
 		V2Doctors:  newElasticsearchDoctorHandler(elasticsearchClient),
 		Visits:     newVisitHandler(pool),
+		V2Visits:   newElasticsearchVisitListHandler(elasticsearchClient),
 	}
 
 	return routes.NewRouter(deps)

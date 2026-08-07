@@ -20,6 +20,7 @@ type Dependencies struct {
 	Doctors    doctor.Handler
 	V2Doctors  doctor.Handler
 	Visits     visit.Handler
+	V2Visits   visit.ListHandler
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -31,7 +32,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	doctors.Register(mux, deps.Doctors)
 	v2doctors.Register(mux, deps.V2Doctors)
 	visits.Register(mux, deps.Visits)
-	v2visits.Register(mux, deps.Visits)
+	v2visits.Register(mux, deps.Visits, deps.V2Visits)
 
 	return mux
 }
