@@ -15,4 +15,8 @@ func Register(mux *http.ServeMux, handler visit.Handler, listHandler visit.ListH
 		"POST /v2/visits/list",
 		listHandler.ListVisits,
 	)
+	mux.HandleFunc(
+		"DELETE /v2/visits/delete",
+		handler.DeleteVisit,
+	)
 }

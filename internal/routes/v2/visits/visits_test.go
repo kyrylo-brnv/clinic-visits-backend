@@ -27,6 +27,9 @@ type fakeRepository struct {
 	listErr      error
 	listCalled   bool
 	listRequest  visit.ListVisitsRequest
+	deleteErr    error
+	deleteCalled bool
+	lastDelete   visit.DeleteVisitRequest
 }
 
 func (r *fakeRepository) CreateVisit(
@@ -46,11 +49,13 @@ func (r *fakeRepository) ListVisits(
 	return r.listedVisits, r.listErr
 }
 
-func (*fakeRepository) DeleteVisit(
-	context.Context,
-	visit.DeleteVisitRequest,
+func (r *fakeRepository) DeleteVisit(
+	_ context.Context,
+	request visit.DeleteVisitRequest,
 ) error {
-	return nil
+	r.deleteCalled = true
+	r.lastDelete = request
+	return r.deleteErr
 }
 
 func (*fakeRepository) UpdateVisit(
@@ -189,5 +194,96 @@ func TestRegisterVisitsListUsesV1Errors(t *testing.T) {
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError || response.Body.String() != `{"error":"failed to list visits"}` {
 		t.Fatalf("repository error response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRegisterVisitsDeleteUsesV1Handler(t *testing.T) {
+	repository := &fakeRepository{}
+	mux := http.NewServeMux()
+	Register(mux, visit.NewHandler(repository), visit.NewListHandler(repository))
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/v2/visits/delete",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444"}`),
+	)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("DELETE /v2/visits/delete status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if !repository.deleteCalled || repository.lastDelete.VisitID != "44444444-4444-4444-8444-444444444444" {
+		t.Fatalf("DeleteVisit() request = %#v", repository.lastDelete)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("DELETE /v2/visits/delete body = %q, want empty", response.Body.String())
+	}
+}
+
+func TestRegisterVisitsDeleteUsesV1Validation(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{
+			name:     "unknown field",
+			body:     `{"visit_id":"44444444-4444-4444-8444-444444444444","unknown":true}`,
+			wantBody: `{"error":"invalid request body"}`,
+		},
+		{
+			name:     "multiple JSON objects",
+			body:     `{"visit_id":"44444444-4444-4444-8444-444444444444"}{}`,
+			wantBody: `{"error":"request body must contain only one JSON object"}`,
+		},
+		{
+			name:     "invalid UUID",
+			body:     `{"visit_id":"invalid"}`,
+			wantBody: `{"error":"invalid UUID"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			mux := http.NewServeMux()
+			Register(mux, visit.NewHandler(repository), visit.NewListHandler(repository))
+
+			request := httptest.NewRequest(http.MethodDelete, "/v2/visits/delete", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("DELETE /v2/visits/delete status = %d, want %d", response.Code, http.StatusBadRequest)
+			}
+			if response.Body.String() != test.wantBody {
+				t.Fatalf("DELETE /v2/visits/delete body = %s, want %s", response.Body.String(), test.wantBody)
+			}
+			if repository.deleteCalled {
+				t.Fatal("DeleteVisit called for invalid request")
+			}
+		})
+	}
+}
+
+func TestRegisterVisitsDeleteUsesV1NotFoundResponse(t *testing.T) {
+	repository := &fakeRepository{deleteErr: visit.ErrVisitNotFound}
+	mux := http.NewServeMux()
+	Register(mux, visit.NewHandler(repository), visit.NewListHandler(repository))
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/v2/visits/delete",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444"}`),
+	)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("DELETE /v2/visits/delete status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	if response.Body.String() != `{"error":"visit not found"}` {
+		t.Fatalf("DELETE /v2/visits/delete body = %s", response.Body.String())
 	}
 }
