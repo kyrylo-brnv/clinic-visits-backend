@@ -12,7 +12,9 @@ make dev
 `make dev` starts the pinned single-node Elasticsearch service, applies
 migrations, and runs the Go API in the foreground. Starting the API checks
 Elasticsearch health and idempotently creates the `clinic-visits-bootstrap-v1`
-index. After the API has initialized it, verify the index with:
+index. Wait for `Clinic Visits API is ready at http://localhost:8080/health`
+before starting integration or Playwright tests. After the API has initialized,
+verify the index with:
 
 ```sh
 curl --head http://localhost:9200/clinic-visits-bootstrap-v1
