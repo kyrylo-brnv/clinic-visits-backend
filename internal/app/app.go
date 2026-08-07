@@ -13,6 +13,7 @@ func New(pool *pgxpool.Pool, elasticsearchClient *elasticsearch.Client) http.Han
 		Patients:   newPatientHandler(pool),
 		V2Patients: newElasticsearchPatientHandler(elasticsearchClient),
 		Doctors:    newDoctorHandler(pool),
+		V2Doctors:  newElasticsearchDoctorHandler(elasticsearchClient),
 		Visits:     newVisitHandler(pool),
 	}
 

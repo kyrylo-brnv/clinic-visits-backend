@@ -1,17 +1,18 @@
 # Clinic Visits API
 
-## Local Elasticsearch
+## Local development
 
-Copy `.env.example` to `.env`, then start the pinned single-node Elasticsearch service:
+Copy `.env.example` to `.env`. PostgreSQL is an external prerequisite and must
+be available at the configured `DB_HOST` and `DB_PORT`.
 
 ```sh
-docker compose up -d --wait elasticsearch
-curl http://localhost:9200
+make dev
 ```
 
-Starting the Go API checks Elasticsearch health and idempotently creates the
-`clinic-visits-bootstrap-v1` index. After the API has initialized it, verify the
-index with:
+`make dev` starts the pinned single-node Elasticsearch service, applies
+migrations, and runs the Go API in the foreground. Starting the API checks
+Elasticsearch health and idempotently creates the `clinic-visits-bootstrap-v1`
+index. After the API has initialized it, verify the index with:
 
 ```sh
 curl --head http://localhost:9200/clinic-visits-bootstrap-v1

@@ -2,7 +2,11 @@ include .env
 
 MIGRATION_DB_URL := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
 
-.PHONY: migrate-create migrate-up migrate-down migrate-version run
+.PHONY: dev migrate-create migrate-up migrate-down migrate-version run
+
+dev:
+	@docker compose up -d --wait elasticsearch
+	@$(MAKE) run
 
 migrate-create:
 	@test -n "$(name)" || (echo "Usage: make migrate-create name=create_doctors"; exit 1)
