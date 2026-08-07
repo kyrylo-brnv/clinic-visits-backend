@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -58,5 +59,11 @@ func main() {
 
 	router := app.New(pool, elasticsearchClient)
 	address := ":" + strconv.Itoa(appServerConfig.HTTPPort)
-	log.Fatal(http.ListenAndServe(address, router))
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatalf("Error binding HTTP server on %s: %v", address, err)
+	}
+
+	log.Printf("Clinic Visits API is ready at http://localhost:%d/health", appServerConfig.HTTPPort)
+	log.Fatal(http.Serve(listener, router))
 }
