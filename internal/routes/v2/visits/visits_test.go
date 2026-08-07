@@ -122,9 +122,7 @@ func TestRegisterVisitsCreateUsesV1Validation(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid v2 create request status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
-	if response.Body.String() != `{"error":"invalid UUID"}` {
-		t.Fatalf("invalid v2 create request body = %s", response.Body.String())
-	}
+	assertJSONError(t, response, "BAD_REQUEST", "invalid UUID")
 	if repository.createCalled {
 		t.Fatal("CreateVisit called for invalid request")
 	}
@@ -146,9 +144,7 @@ func TestRegisterVisitsCreateUsesV1ErrorResponse(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("v2 visit time conflict status = %d, want %d", response.Code, http.StatusConflict)
 	}
-	if response.Body.String() != `{"error":"doctor already has a visit during this time"}` {
-		t.Fatalf("v2 visit time conflict body = %s", response.Body.String())
-	}
+	assertJSONError(t, response, "CONFLICT", "doctor already has a visit during this time")
 }
 
 func TestRegisterVisitsListUsesV1PaginationAndResponseContract(t *testing.T) {
@@ -190,9 +186,10 @@ func TestRegisterVisitsListUsesV1Errors(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v2/visits/list?page=0", nil)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
-	if response.Code != http.StatusBadRequest || response.Body.String() != `{"error":"page must be a positive integer"}` {
+	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid pagination response = %d %s", response.Code, response.Body.String())
 	}
+	assertJSONError(t, response, "BAD_REQUEST", "page must be a positive integer")
 	if repository.listCalled {
 		t.Fatal("ListVisits called for invalid pagination")
 	}
@@ -200,9 +197,10 @@ func TestRegisterVisitsListUsesV1Errors(t *testing.T) {
 	request = httptest.NewRequest(http.MethodPost, "/v2/visits/list", nil)
 	response = httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
-	if response.Code != http.StatusInternalServerError || response.Body.String() != `{"error":"failed to list visits"}` {
+	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("repository error response = %d %s", response.Code, response.Body.String())
 	}
+	assertJSONError(t, response, "INTERNAL_ERROR", "Something went wrong")
 }
 
 func TestRegisterVisitsDeleteUsesV1Handler(t *testing.T) {
@@ -231,24 +229,24 @@ func TestRegisterVisitsDeleteUsesV1Handler(t *testing.T) {
 
 func TestRegisterVisitsDeleteUsesV1Validation(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		wantBody string
+		name        string
+		body        string
+		wantMessage string
 	}{
 		{
-			name:     "unknown field",
-			body:     `{"visit_id":"44444444-4444-4444-8444-444444444444","unknown":true}`,
-			wantBody: `{"error":"invalid request body"}`,
+			name:        "unknown field",
+			body:        `{"visit_id":"44444444-4444-4444-8444-444444444444","unknown":true}`,
+			wantMessage: "invalid request body",
 		},
 		{
-			name:     "multiple JSON objects",
-			body:     `{"visit_id":"44444444-4444-4444-8444-444444444444"}{}`,
-			wantBody: `{"error":"request body must contain only one JSON object"}`,
+			name:        "multiple JSON objects",
+			body:        `{"visit_id":"44444444-4444-4444-8444-444444444444"}{}`,
+			wantMessage: "request body must contain only one JSON object",
 		},
 		{
-			name:     "invalid UUID",
-			body:     `{"visit_id":"invalid"}`,
-			wantBody: `{"error":"invalid UUID"}`,
+			name:        "invalid UUID",
+			body:        `{"visit_id":"invalid"}`,
+			wantMessage: "invalid UUID",
 		},
 	}
 
@@ -265,9 +263,7 @@ func TestRegisterVisitsDeleteUsesV1Validation(t *testing.T) {
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("DELETE /v2/visits/delete status = %d, want %d", response.Code, http.StatusBadRequest)
 			}
-			if response.Body.String() != test.wantBody {
-				t.Fatalf("DELETE /v2/visits/delete body = %s, want %s", response.Body.String(), test.wantBody)
-			}
+			assertJSONError(t, response, "BAD_REQUEST", test.wantMessage)
 			if repository.deleteCalled {
 				t.Fatal("DeleteVisit called for invalid request")
 			}
@@ -291,9 +287,7 @@ func TestRegisterVisitsDeleteUsesV1NotFoundResponse(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("DELETE /v2/visits/delete status = %d, want %d", response.Code, http.StatusNotFound)
 	}
-	if response.Body.String() != `{"error":"visit not found"}` {
-		t.Fatalf("DELETE /v2/visits/delete body = %s", response.Body.String())
-	}
+	assertJSONError(t, response, "NOT_FOUND", "visit not found")
 }
 
 func TestRegisterVisitsUpdateUsesV1Handler(t *testing.T) {
@@ -339,9 +333,7 @@ func TestRegisterVisitsUpdateUsesV1Validation(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid v2 update request status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
-	if response.Body.String() != `{"error":"invalid visit status"}` {
-		t.Fatalf("invalid v2 update request body = %s", response.Body.String())
-	}
+	assertJSONError(t, response, "BAD_REQUEST", "invalid visit status")
 	if repository.updateCalled {
 		t.Fatal("UpdateVisit called for invalid request")
 	}
@@ -364,12 +356,28 @@ func TestRegisterVisitsUpdateUsesV1ErrorResponse(t *testing.T) {
 		t.Fatalf("invalid v2 status transition status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
 	var body struct {
-		Error string `json:"error"`
+		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode invalid v2 status transition response: %v", err)
 	}
-	if body.Error != "invalid visit status transition: SCHEDULED -> CLOSED" {
-		t.Fatalf("invalid v2 status transition body = %q", body.Error)
+	if body.Message != "invalid visit status transition: SCHEDULED -> CLOSED" {
+		t.Fatalf("invalid v2 status transition body = %q", body.Message)
+	}
+}
+
+func assertJSONError(t *testing.T, response *httptest.ResponseRecorder, code, message string) {
+	t.Helper()
+
+	var body struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.Code != code || body.Message != message || body.RequestID == "" {
+		t.Fatalf("error response = %#v, want code=%q message=%q and a request ID", body, code, message)
 	}
 }

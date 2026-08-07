@@ -55,3 +55,92 @@ func TestNewRouterServesAPIDocumentation(t *testing.T) {
 		})
 	}
 }
+
+func TestNewRouterAddsAndPropagatesRequestIDToErrors(t *testing.T) {
+	router := NewRouter(Dependencies{})
+	request := httptest.NewRequest(http.MethodPost, "/health", nil)
+	request.Header.Set("X-Request-ID", "client-request-123")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /health status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+	if response.Header().Get("X-Request-ID") != "client-request-123" {
+		t.Fatalf("X-Request-ID = %q, want propagated ID", response.Header().Get("X-Request-ID"))
+	}
+
+	var body struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.Code != "METHOD_NOT_ALLOWED" || body.Message != "Method Not Allowed" || body.RequestID != "client-request-123" {
+		t.Fatalf("error response = %#v", body)
+	}
+}
+
+func TestNewRouterServesHealthForHEAD(t *testing.T) {
+	router := NewRouter(Dependencies{})
+	request := httptest.NewRequest(http.MethodHead, "/health", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HEAD /health status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if response.Header().Get("X-Request-ID") == "" {
+		t.Fatal("HEAD /health response is missing X-Request-ID")
+	}
+}
+
+func TestNewRouterPreservesRequireMethodMessage(t *testing.T) {
+	router := NewRouter(Dependencies{})
+	request := httptest.NewRequest(http.MethodGet, "/v1/visits/create", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/visits/create status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+	var body struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.Code != "METHOD_NOT_ALLOWED" || body.Message != "Method Not Allowed" || body.RequestID == "" {
+		t.Fatalf("error response = %#v", body)
+	}
+}
+
+func TestNewRouterPreservesDoctorMethodMessage(t *testing.T) {
+	router := NewRouter(Dependencies{})
+	request := httptest.NewRequest(http.MethodGet, "/v1/doctors/search", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/doctors/search status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+	var body struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.Code != "METHOD_NOT_ALLOWED" || body.Message != "Method Not Allowed" || body.RequestID == "" {
+		t.Fatalf("error response = %#v", body)
+	}
+}

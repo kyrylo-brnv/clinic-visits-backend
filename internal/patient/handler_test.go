@@ -2,6 +2,8 @@ package patient
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,7 +39,7 @@ func (r *FakeRepository) FindPatients(
 	r.FindPatientsCalled = true
 	r.LastSearch = request
 
-	return r.Patients, nil
+	return r.Patients, r.FilterError
 }
 
 func TestSearchPatientsValidResponse(t *testing.T) {
@@ -104,6 +106,35 @@ func TestSearchPatientsAllowsEmptyBody(t *testing.T) {
 
 	if !repo.FindPatientsCalled {
 		t.Fatal("expected repository to be called")
+	}
+}
+
+func TestSearchPatientsMasksRepositoryError(t *testing.T) {
+	t.Parallel()
+
+	repo := NewFakeRepository()
+	repo.FilterError = errors.New("Elasticsearch unavailable: internal-index")
+	handler := NewHandler(repo)
+	request := httptest.NewRequest(http.MethodPost, "/v2/patients/search", nil)
+	response := httptest.NewRecorder()
+
+	handler.SearchPatients(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	var body struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.Code != "INTERNAL_ERROR" || body.Message != "Something went wrong" {
+		t.Fatalf("error response = %#v", body)
+	}
+	if strings.Contains(response.Body.String(), "Elasticsearch") || strings.Contains(response.Body.String(), "internal-index") {
+		t.Fatalf("response exposes repository error: %s", response.Body.String())
 	}
 }
 

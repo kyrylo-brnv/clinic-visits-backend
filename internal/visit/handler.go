@@ -76,13 +76,14 @@ func (h Handler) CreateVisit(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&request); err != nil {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid request body")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		httpapi.WriteJSONError(
 			w,
+			r,
 			http.StatusBadRequest,
 			"request body must contain only one JSON object",
 		)
@@ -92,24 +93,24 @@ func (h Handler) CreateVisit(w http.ResponseWriter, r *http.Request) {
 	if !uuid.IsValid(request.DoctorID) ||
 		!uuid.IsValid(request.PatientID) ||
 		!uuid.IsValid(request.ClinicID) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid UUID")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid UUID")
 		return
 	}
 
 	if request.VisitStartTime.IsZero() ||
 		request.VisitEndTime.IsZero() ||
 		!request.VisitEndTime.After(request.VisitStartTime) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, ErrInvalidTimeRange.Error())
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, ErrInvalidTimeRange.Error())
 		return
 	}
 
 	createdVisit, err := h.repo.CreateVisit(r.Context(), request)
 	if err != nil {
-		writeCreateVisitError(w, err)
+		writeCreateVisitError(w, r, err)
 		return
 	}
 
-	httpapi.WriteJSONResponse(w, http.StatusCreated, map[string]any{
+	httpapi.WriteJSONResponse(w, r, http.StatusCreated, map[string]any{
 		"data": createdVisit,
 	})
 }
@@ -129,7 +130,7 @@ func listVisits(w http.ResponseWriter, r *http.Request, repo ListRepository) {
 
 	paginationParams, err := pagination.Parse(r.URL.Query())
 	if err != nil {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -137,11 +138,11 @@ func listVisits(w http.ResponseWriter, r *http.Request, repo ListRepository) {
 		Pagination: paginationParams,
 	})
 	if err != nil {
-		httpapi.WriteJSONError(w, http.StatusInternalServerError, "failed to list visits")
+		httpapi.WriteInternalError(w, r, err)
 		return
 	}
 
-	httpapi.WriteJSONResponse(w, http.StatusOK, map[string]any{
+	httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{
 		"data": visits,
 	})
 }
@@ -157,17 +158,17 @@ func (h Handler) DeleteVisit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !uuid.IsValid(request.VisitID) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid UUID")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid UUID")
 		return
 	}
 
 	if err := h.repo.DeleteVisit(r.Context(), request); err != nil {
 		if errors.Is(err, ErrVisitNotFound) {
-			httpapi.WriteJSONError(w, http.StatusNotFound, err.Error())
+			httpapi.WriteJSONError(w, r, http.StatusNotFound, err.Error())
 			return
 		}
 
-		httpapi.WriteJSONError(w, http.StatusInternalServerError, "failed to delete visit")
+		httpapi.WriteInternalError(w, r, err)
 		return
 	}
 
@@ -197,17 +198,17 @@ func (h Handler) UpdateVisit(w http.ResponseWriter, r *http.Request) {
 		(request.DoctorID != nil && !uuid.IsValid(*request.DoctorID)) ||
 		(request.PatientID != nil && !uuid.IsValid(*request.PatientID)) ||
 		(request.ClinicID != nil && !uuid.IsValid(*request.ClinicID)) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid UUID")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid UUID")
 		return
 	}
 
 	if request.Status != nil && !IsValidStatus(*request.Status) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid visit status")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid visit status")
 		return
 	}
 
 	if !request.HasChanges() {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "at least one field must be updated")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "at least one field must be updated")
 		return
 	}
 
@@ -215,17 +216,17 @@ func (h Handler) UpdateVisit(w http.ResponseWriter, r *http.Request) {
 		(request.VisitEndTime != nil && request.VisitEndTime.IsZero()) ||
 		(request.VisitStartTime != nil && request.VisitEndTime != nil &&
 			!request.VisitEndTime.After(*request.VisitStartTime)) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, ErrInvalidTimeRange.Error())
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, ErrInvalidTimeRange.Error())
 		return
 	}
 
 	updatedVisit, err := h.repo.UpdateVisit(r.Context(), request)
 	if err != nil {
-		writeUpdateVisitError(w, err)
+		writeUpdateVisitError(w, r, err)
 		return
 	}
 
-	httpapi.WriteJSONResponse(w, http.StatusOK, map[string]any{
+	httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{
 		"data": updatedVisit,
 	})
 }
@@ -235,13 +236,14 @@ func decodeStrictRequest(w http.ResponseWriter, r *http.Request, destination any
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(destination); err != nil {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid request body")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid request body")
 		return false
 	}
 
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		httpapi.WriteJSONError(
 			w,
+			r,
 			http.StatusBadRequest,
 			"request body must contain only one JSON object",
 		)
@@ -251,38 +253,38 @@ func decodeStrictRequest(w http.ResponseWriter, r *http.Request, destination any
 	return true
 }
 
-func writeCreateVisitError(w http.ResponseWriter, err error) {
+func writeCreateVisitError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrDoctorNotFound),
 		errors.Is(err, ErrPatientNotFound),
 		errors.Is(err, ErrClinicNotFound):
-		httpapi.WriteJSONError(w, http.StatusNotFound, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDoctorClinicMismatch),
 		errors.Is(err, ErrInvalidTimeRange):
-		httpapi.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrVisitTimeConflict),
 		errors.Is(err, ErrPatientTimeConflict):
-		httpapi.WriteJSONError(w, http.StatusConflict, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusConflict, err.Error())
 	default:
-		httpapi.WriteJSONError(w, http.StatusInternalServerError, "failed to create visit")
+		httpapi.WriteInternalError(w, r, err)
 	}
 }
 
-func writeUpdateVisitError(w http.ResponseWriter, err error) {
+func writeUpdateVisitError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrVisitNotFound),
 		errors.Is(err, ErrDoctorNotFound),
 		errors.Is(err, ErrPatientNotFound),
 		errors.Is(err, ErrClinicNotFound):
-		httpapi.WriteJSONError(w, http.StatusNotFound, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDoctorClinicMismatch),
 		errors.Is(err, ErrInvalidTimeRange),
 		errors.Is(err, ErrInvalidStatusTransition):
-		httpapi.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrVisitTimeConflict),
 		errors.Is(err, ErrPatientTimeConflict):
-		httpapi.WriteJSONError(w, http.StatusConflict, err.Error())
+		httpapi.WriteJSONError(w, r, http.StatusConflict, err.Error())
 	default:
-		httpapi.WriteJSONError(w, http.StatusInternalServerError, "failed to update visit")
+		httpapi.WriteInternalError(w, r, err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/smithautotest/clinic-visits/internal/apidocs"
 	"github.com/smithautotest/clinic-visits/internal/doctor"
+	"github.com/smithautotest/clinic-visits/internal/httpapi"
 	"github.com/smithautotest/clinic-visits/internal/patient"
 	doctors "github.com/smithautotest/clinic-visits/internal/routes/v1/doctors"
 	patients "github.com/smithautotest/clinic-visits/internal/routes/v1/patients"
@@ -27,7 +28,7 @@ type Dependencies struct {
 func NewRouter(deps Dependencies) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("/health", healthHandler)
 	apidocs.Register(mux)
 	patients.Register(mux, deps.Patients)
 	v2patients.Register(mux, deps.V2Patients)
@@ -36,5 +37,5 @@ func NewRouter(deps Dependencies) http.Handler {
 	visits.Register(mux, deps.Visits)
 	v2visits.Register(mux, deps.Visits, deps.V2Visits)
 
-	return mux
+	return httpapi.WithRequestID(mux)
 }
