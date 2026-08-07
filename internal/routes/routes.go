@@ -3,6 +3,7 @@ package routes
 import (
 	"net/http"
 
+	"github.com/smithautotest/clinic-visits/internal/apidocs"
 	"github.com/smithautotest/clinic-visits/internal/doctor"
 	"github.com/smithautotest/clinic-visits/internal/patient"
 	doctors "github.com/smithautotest/clinic-visits/internal/routes/v1/doctors"
@@ -27,6 +28,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", healthHandler)
+	apidocs.Register(mux)
 	patients.Register(mux, deps.Patients)
 	v2patients.Register(mux, deps.V2Patients)
 	doctors.Register(mux, deps.Doctors)

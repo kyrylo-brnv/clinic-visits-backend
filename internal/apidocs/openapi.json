@@ -1,0 +1,665 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Clinic Visits API",
+    "version": "2.0.0",
+    "description": "HTTP API for patient and doctor search and visit management. v1 reads from PostgreSQL; v2 search and visit-list reads use Elasticsearch while visit writes keep the v1 contract."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The server hosting this documentation"
+    }
+  ],
+  "tags": [
+    { "name": "Health" },
+    { "name": "V1 Patients" },
+    { "name": "V1 Doctors" },
+    { "name": "V1 Visits" },
+    { "name": "V2 Patients" },
+    { "name": "V2 Doctors" },
+    { "name": "V2 Visits" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Check API health",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "The API process is available.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/patients/search": {
+      "post": {
+        "tags": ["V1 Patients"],
+        "summary": "Search patients using PostgreSQL",
+        "operationId": "searchPatientsV1",
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/PatientSearch" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/PatientSearchSuccess" },
+          "400": { "$ref": "#/components/responses/SearchValidationError" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v2/patients/search": {
+      "post": {
+        "tags": ["V2 Patients"],
+        "summary": "Search patients using Elasticsearch",
+        "operationId": "searchPatientsV2",
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/PatientSearch" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/PatientSearchSuccess" },
+          "400": { "$ref": "#/components/responses/SearchValidationError" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v1/doctors/search": {
+      "post": {
+        "tags": ["V1 Doctors"],
+        "summary": "Search doctors using PostgreSQL",
+        "operationId": "searchDoctorsV1",
+        "requestBody": { "$ref": "#/components/requestBodies/DoctorSearch" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/DoctorSearchSuccess" },
+          "400": { "$ref": "#/components/responses/SearchValidationError" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v2/doctors/search": {
+      "post": {
+        "tags": ["V2 Doctors"],
+        "summary": "Search doctors using Elasticsearch",
+        "operationId": "searchDoctorsV2",
+        "requestBody": { "$ref": "#/components/requestBodies/DoctorSearch" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/DoctorSearchSuccess" },
+          "400": { "$ref": "#/components/responses/SearchValidationError" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v1/visits/create": {
+      "post": {
+        "tags": ["V1 Visits"],
+        "summary": "Create a visit",
+        "description": "Creates a SCHEDULED visit. Doctor and patient intervals use half-open [start, end) overlap checks.",
+        "operationId": "createVisitV1",
+        "requestBody": { "$ref": "#/components/requestBodies/CreateVisit" },
+        "responses": {
+          "201": { "$ref": "#/components/responses/VisitCreated" },
+          "400": { "$ref": "#/components/responses/VisitValidationError" },
+          "404": { "$ref": "#/components/responses/RelatedEntityNotFound" },
+          "409": { "$ref": "#/components/responses/VisitTimeConflict" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v2/visits/create": {
+      "post": {
+        "tags": ["V2 Visits"],
+        "summary": "Create a visit",
+        "description": "Uses the PostgreSQL/outbox write path and preserves the v1 contract. Creates a SCHEDULED visit; doctor and patient intervals use half-open [start, end) overlap checks.",
+        "operationId": "createVisitV2",
+        "requestBody": { "$ref": "#/components/requestBodies/CreateVisit" },
+        "responses": {
+          "201": { "$ref": "#/components/responses/VisitCreated" },
+          "400": { "$ref": "#/components/responses/VisitValidationError" },
+          "404": { "$ref": "#/components/responses/RelatedEntityNotFound" },
+          "409": { "$ref": "#/components/responses/VisitTimeConflict" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v1/visits/list": {
+      "post": {
+        "tags": ["V1 Visits"],
+        "summary": "List visits from PostgreSQL",
+        "operationId": "listVisitsV1",
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/VisitListSuccess" },
+          "400": { "$ref": "#/components/responses/PaginationValidationError" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v2/visits/list": {
+      "post": {
+        "tags": ["V2 Visits"],
+        "summary": "List visits from Elasticsearch",
+        "operationId": "listVisitsV2",
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/VisitListSuccess" },
+          "400": { "$ref": "#/components/responses/PaginationValidationError" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v1/visits/update": {
+      "patch": {
+        "tags": ["V1 Visits"],
+        "summary": "Update a visit",
+        "description": "Supports partial updates and enforces the visit status state machine.",
+        "operationId": "updateVisitV1",
+        "requestBody": { "$ref": "#/components/requestBodies/UpdateVisit" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/VisitUpdated" },
+          "400": { "$ref": "#/components/responses/VisitValidationError" },
+          "404": { "$ref": "#/components/responses/VisitOrRelatedEntityNotFound" },
+          "409": { "$ref": "#/components/responses/VisitTimeConflict" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v2/visits/update": {
+      "patch": {
+        "tags": ["V2 Visits"],
+        "summary": "Update a visit",
+        "description": "Uses the PostgreSQL/outbox write path, preserves the v1 contract, and enforces the visit status state machine.",
+        "operationId": "updateVisitV2",
+        "requestBody": { "$ref": "#/components/requestBodies/UpdateVisit" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/VisitUpdated" },
+          "400": { "$ref": "#/components/responses/VisitValidationError" },
+          "404": { "$ref": "#/components/responses/VisitOrRelatedEntityNotFound" },
+          "409": { "$ref": "#/components/responses/VisitTimeConflict" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v1/visits/delete": {
+      "delete": {
+        "tags": ["V1 Visits"],
+        "summary": "Delete a visit",
+        "operationId": "deleteVisitV1",
+        "requestBody": { "$ref": "#/components/requestBodies/DeleteVisit" },
+        "responses": {
+          "204": { "description": "Visit deleted successfully; the response has no body." },
+          "400": { "$ref": "#/components/responses/VisitValidationError" },
+          "404": { "$ref": "#/components/responses/VisitNotFound" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/v2/visits/delete": {
+      "delete": {
+        "tags": ["V2 Visits"],
+        "summary": "Delete a visit",
+        "description": "Uses the PostgreSQL/outbox write path and preserves the v1 contract.",
+        "operationId": "deleteVisitV2",
+        "requestBody": { "$ref": "#/components/requestBodies/DeleteVisit" },
+        "responses": {
+          "204": { "description": "Visit deleted successfully; the response has no body." },
+          "400": { "$ref": "#/components/responses/VisitValidationError" },
+          "404": { "$ref": "#/components/responses/VisitNotFound" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "description": "One-based page number.",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "PerPage": {
+        "name": "per_page",
+        "in": "query",
+        "description": "Number of results per page.",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 20
+        }
+      }
+    },
+    "requestBodies": {
+      "PatientSearch": {
+        "description": "Optional patient search, filter, and sorting criteria. An omitted or empty body lists patients. A supplied search or filter object must contain at least one effective criterion.",
+        "required": false,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/PatientSearchRequest" }
+          }
+        }
+      },
+      "DoctorSearch": {
+        "description": "Optional doctor filters. An omitted or empty body lists doctors.",
+        "required": false,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/DoctorSearchRequest" }
+          }
+        }
+      },
+      "CreateVisit": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/CreateVisitRequest" }
+          }
+        }
+      },
+      "UpdateVisit": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/UpdateVisitRequest" }
+          }
+        }
+      },
+      "DeleteVisit": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/DeleteVisitRequest" }
+          }
+        }
+      }
+    },
+    "responses": {
+      "PatientSearchSuccess": {
+        "description": "Matching patients in the requested page.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/PatientListResponse" }
+          }
+        }
+      },
+      "DoctorSearchSuccess": {
+        "description": "Matching doctors.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/DoctorListResponse" }
+          }
+        }
+      },
+      "VisitCreated": {
+        "description": "Visit created with SCHEDULED status.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/VisitResponse" }
+          }
+        }
+      },
+      "VisitUpdated": {
+        "description": "Visit updated successfully.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/VisitResponse" }
+          }
+        }
+      },
+      "VisitListSuccess": {
+        "description": "Visits in the requested page.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/VisitListResponse" }
+          }
+        }
+      },
+      "SearchValidationError": {
+        "description": "Malformed JSON, unknown fields, invalid UUID filters, invalid sorting, empty supplied criteria, or invalid pagination.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          },
+          "text/plain": {
+            "schema": {
+              "type": "string",
+              "description": "Some v1 patient decoding errors use a plain-text error response."
+            }
+          }
+        }
+      },
+      "PaginationValidationError": {
+        "description": "page or per_page is not a positive integer, or per_page exceeds 200.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "VisitValidationError": {
+        "description": "Malformed JSON, unknown fields, an invalid UUID/time range/status, no update fields, a doctor-clinic mismatch, or a prohibited status transition.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "RelatedEntityNotFound": {
+        "description": "The doctor, patient, or clinic does not exist.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "VisitOrRelatedEntityNotFound": {
+        "description": "The visit, doctor, patient, or clinic does not exist.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "VisitNotFound": {
+        "description": "The visit does not exist.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "VisitTimeConflict": {
+        "description": "The doctor or patient already has an overlapping visit interval.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "The request could not be completed because a backing service failed.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          },
+          "text/plain": {
+            "schema": {
+              "type": "string",
+              "description": "The v1 patient search handler uses a plain-text response for repository failures."
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "invalid request body"
+          }
+        }
+      },
+      "PatientSearchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "search": { "$ref": "#/components/schemas/PatientSearch" },
+          "filter": { "$ref": "#/components/schemas/PatientFilter" },
+          "sort": { "$ref": "#/components/schemas/PatientSort" }
+        }
+      },
+      "PatientSearch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Case-insensitive name matching. If supplied, at least one field must be non-empty.",
+        "properties": {
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string" }
+        }
+      },
+      "PatientFilter": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/StringFilter" }
+        }
+      },
+      "StringFilter": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Exactly matching or excluding a non-empty string value. At least one operation must be supplied.",
+        "properties": {
+          "equals": { "type": "string", "minLength": 1 },
+          "not_equals": { "type": "string", "minLength": 1 }
+        },
+        "anyOf": [
+          { "required": ["equals"] },
+          { "required": ["not_equals"] }
+        ]
+      },
+      "PatientSort": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "direction"],
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": ["first_name", "last_name", "date_of_birth", "created_at"]
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["asc", "desc"]
+          }
+        }
+      },
+      "Patient": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "first_name", "last_name", "date_of_birth", "gender", "is_deleted"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string" },
+          "date_of_birth": { "type": "string", "format": "date" },
+          "gender": { "type": "string" },
+          "is_deleted": { "type": "boolean" }
+        }
+      },
+      "PatientListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Patient" }
+          }
+        }
+      },
+      "DoctorSearchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "filter": { "$ref": "#/components/schemas/DoctorFilter" }
+        }
+      },
+      "DoctorFilter": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "All supplied filters are combined. Empty strings are treated as omitted filters.",
+        "properties": {
+          "doctor_id": { "$ref": "#/components/schemas/OptionalUUIDFilter" },
+          "visit_id": { "$ref": "#/components/schemas/OptionalUUIDFilter" },
+          "clinic_id": { "$ref": "#/components/schemas/OptionalUUIDFilter" }
+        }
+      },
+      "OptionalUUIDFilter": {
+        "description": "A UUID, or an empty string to omit this filter.",
+        "anyOf": [
+          { "type": "string", "format": "uuid" },
+          { "type": "string", "enum": [""] }
+        ]
+      },
+      "Doctor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "specialty_id", "clinic_id", "full_name"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "specialty_id": { "type": "string", "format": "uuid" },
+          "clinic_id": { "type": "string", "format": "uuid" },
+          "full_name": { "type": "string" }
+        }
+      },
+      "DoctorListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Doctor" }
+          }
+        }
+      },
+      "InputTimestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 timestamp accepted by Go's JSON time parser.",
+        "example": "2026-08-05T09:00:00+03:00"
+      },
+      "APITimestamp": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}[-+][0-9]{2}:[0-9]{2}$",
+        "description": "API response timestamp with exactly six fractional-second digits and a numeric timezone offset.",
+        "example": "2026-08-05T09:00:00.000000+03:00"
+      },
+      "VisitStatus": {
+        "type": "string",
+        "enum": ["SCHEDULED", "IN_PROGRESS", "CLOSED", "CANCELED"],
+        "description": "Lifecycle state. Allowed changes are SCHEDULED to IN_PROGRESS or CANCELED, and IN_PROGRESS to CLOSED or CANCELED. Idempotent self-transitions are allowed for every state. CLOSED and CANCELED are terminal and cannot change to a different state."
+      },
+      "CreateVisitRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["doctor_id", "patient_id", "clinic_id", "visit_start_time", "visit_end_time"],
+        "properties": {
+          "doctor_id": { "type": "string", "format": "uuid" },
+          "patient_id": { "type": "string", "format": "uuid" },
+          "clinic_id": { "type": "string", "format": "uuid" },
+          "visit_start_time": { "$ref": "#/components/schemas/InputTimestamp" },
+          "visit_end_time": {
+            "allOf": [{ "$ref": "#/components/schemas/InputTimestamp" }],
+            "description": "Must be after visit_start_time."
+          }
+        }
+      },
+      "UpdateVisitRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["visit_id"],
+        "description": "visit_id plus at least one non-null update field is required. If both times are supplied, visit_end_time must be after visit_start_time.",
+        "properties": {
+          "visit_id": { "type": "string", "format": "uuid" },
+          "doctor_id": { "type": "string", "format": "uuid" },
+          "patient_id": { "type": "string", "format": "uuid" },
+          "clinic_id": { "type": "string", "format": "uuid" },
+          "visit_start_time": { "$ref": "#/components/schemas/InputTimestamp" },
+          "visit_end_time": { "$ref": "#/components/schemas/InputTimestamp" },
+          "status": { "$ref": "#/components/schemas/VisitStatus" }
+        },
+        "anyOf": [
+          { "required": ["doctor_id"] },
+          { "required": ["patient_id"] },
+          { "required": ["clinic_id"] },
+          { "required": ["visit_start_time"] },
+          { "required": ["visit_end_time"] },
+          { "required": ["status"] }
+        ]
+      },
+      "DeleteVisitRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["visit_id"],
+        "properties": {
+          "visit_id": { "type": "string", "format": "uuid" }
+        }
+      },
+      "Visit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "doctor_id", "patient_id", "clinic_id", "status", "visit_start_time", "visit_end_time", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "doctor_id": { "type": "string", "format": "uuid" },
+          "patient_id": { "type": "string", "format": "uuid" },
+          "clinic_id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/VisitStatus" },
+          "visit_start_time": { "$ref": "#/components/schemas/APITimestamp" },
+          "visit_end_time": { "$ref": "#/components/schemas/APITimestamp" },
+          "created_at": { "$ref": "#/components/schemas/APITimestamp" },
+          "updated_at": { "$ref": "#/components/schemas/APITimestamp" }
+        }
+      },
+      "VisitResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": { "$ref": "#/components/schemas/Visit" }
+        }
+      },
+      "VisitListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Visit" }
+          }
+        }
+      }
+    }
+  }
+}

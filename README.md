@@ -21,3 +21,10 @@ curl --head http://localhost:9200/clinic-visits-bootstrap-v1
 ```
 
 Stop only Elasticsearch with `docker compose stop elasticsearch`.
+
+## API documentation
+
+With the API running, open the Swagger UI at
+[http://localhost:8080/docs](http://localhost:8080/docs). The OpenAPI 3.0 JSON
+document is available directly at
+[http://localhost:8080/openapi.json](http://localhost:8080/openapi.json).
