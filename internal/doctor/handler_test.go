@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -191,7 +192,7 @@ func TestSearchDoctorsRejectsWrongMethod(t *testing.T) {
 
 	handler.SearchDoctors(response, request)
 
-	assertJSONError(t, response, http.StatusMethodNotAllowed, "method not allowed")
+	assertJSONError(t, response, http.StatusMethodNotAllowed, "Method Not Allowed")
 
 	if response.Header().Get("Allow") != http.MethodPost {
 		t.Fatalf("expected Allow header %q", http.MethodPost)
@@ -216,7 +217,7 @@ func TestSearchDoctorsHandlesRepositoryError(t *testing.T) {
 		t,
 		response,
 		http.StatusInternalServerError,
-		"failed to search doctors",
+		"Something went wrong",
 	)
 }
 
@@ -240,8 +241,26 @@ func assertJSONError(
 		)
 	}
 
-	expectedBody := `{"error":"` + message + `"}`
-	if response.Body.String() != expectedBody {
-		t.Fatalf("expected body %s, got %s", expectedBody, response.Body.String())
+	var body struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	expectedCode := map[int]string{
+		http.StatusBadRequest:          "BAD_REQUEST",
+		http.StatusMethodNotAllowed:    "METHOD_NOT_ALLOWED",
+		http.StatusInternalServerError: "INTERNAL_ERROR",
+	}[statusCode]
+	if body.Code != expectedCode {
+		t.Fatalf("expected code %q, got %q", expectedCode, body.Code)
+	}
+	if body.Message != message {
+		t.Fatalf("expected message %q, got %q", message, body.Message)
+	}
+	if body.RequestID == "" || response.Header().Get("X-Request-ID") != body.RequestID {
+		t.Fatalf("unexpected request ID: body=%q header=%q", body.RequestID, response.Header().Get("X-Request-ID"))
 	}
 }

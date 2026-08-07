@@ -2,6 +2,7 @@ package v2
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,7 +66,15 @@ func TestRegisterDoctorsSearchUsesV1Validation(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid UUID status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
-	if response.Body.String() != `{"error":"invalid UUID filter"}` {
-		t.Fatalf("invalid UUID body = %s", response.Body.String())
+	var body struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode invalid UUID response: %v", err)
+	}
+	if body.Code != "BAD_REQUEST" || body.Message != "invalid UUID filter" || body.RequestID == "" {
+		t.Fatalf("invalid UUID response = %#v", body)
 	}
 }

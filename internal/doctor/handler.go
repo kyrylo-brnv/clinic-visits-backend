@@ -19,9 +19,7 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (h Handler) SearchDoctors(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		httpapi.WriteJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	if !httpapi.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -34,7 +32,7 @@ func (h Handler) SearchDoctors(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, io.EOF):
 		request = &DoctorSearchRequest{}
 	case err != nil || request == nil:
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid request body")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -42,6 +40,7 @@ func (h Handler) SearchDoctors(w http.ResponseWriter, r *http.Request) {
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 			httpapi.WriteJSONError(
 				w,
+				r,
 				http.StatusBadRequest,
 				"request body must contain only one JSON object",
 			)
@@ -50,21 +49,17 @@ func (h Handler) SearchDoctors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if hasInvalidUUIDFilter(request.Filter) {
-		httpapi.WriteJSONError(w, http.StatusBadRequest, "invalid UUID filter")
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid UUID filter")
 		return
 	}
 
 	doctors, err := h.repo.FindDoctors(r.Context(), *request)
 	if err != nil {
-		httpapi.WriteJSONError(
-			w,
-			http.StatusInternalServerError,
-			"failed to search doctors",
-		)
+		httpapi.WriteInternalError(w, r, err)
 		return
 	}
 
-	httpapi.WriteJSONResponse(w, http.StatusOK, map[string]any{
+	httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{
 		"data": doctors,
 	})
 }

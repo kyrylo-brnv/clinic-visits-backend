@@ -1,8 +1,9 @@
 package routes
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/smithautotest/clinic-visits/internal/httpapi"
 )
 
 type healthResponse struct {
@@ -10,12 +11,11 @@ type healthResponse struct {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	payload, err := json.Marshal(healthResponse{Status: "ok"})
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		httpapi.WriteJSONError(w, r, http.StatusMethodNotAllowed, "Method Not Allowed")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(payload)
+	httpapi.WriteJSONResponse(w, r, http.StatusOK, healthResponse{Status: "ok"})
 }

@@ -8,7 +8,7 @@ import (
 
 func Register(mux *http.ServeMux, handler patient.Handler) {
 	mux.HandleFunc(
-		"POST /v2/patients/search",
+		"/v2/patients/search",
 		handler.SearchPatients,
 	)
 }

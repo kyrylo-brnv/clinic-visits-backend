@@ -8,19 +8,19 @@ import (
 
 func Register(mux *http.ServeMux, handler visit.Handler, listHandler visit.ListHandler) {
 	mux.HandleFunc(
-		"POST /v2/visits/create",
+		"/v2/visits/create",
 		handler.CreateVisit,
 	)
 	mux.HandleFunc(
-		"POST /v2/visits/list",
+		"/v2/visits/list",
 		listHandler.ListVisits,
 	)
 	mux.HandleFunc(
-		"DELETE /v2/visits/delete",
+		"/v2/visits/delete",
 		handler.DeleteVisit,
 	)
 	mux.HandleFunc(
-		"PATCH /v2/visits/update",
+		"/v2/visits/update",
 		handler.UpdateVisit,
 	)
 }

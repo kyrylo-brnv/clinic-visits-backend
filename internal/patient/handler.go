@@ -32,59 +32,34 @@ func (h Handler) SearchPatients(w http.ResponseWriter, r *http.Request) {
 	decoder := decodeRequestBody(r)
 
 	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		http.Error(
-			w,
-			"invalid request body",
-			http.StatusBadRequest,
-		)
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	paginationParams, err := pagination.Parse(r.URL.Query())
 	if err != nil {
-		httpapi.WriteJSONResponse(
-			w,
-			http.StatusBadRequest,
-			map[string]string{
-				"error": err.Error(),
-			},
-		)
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	request.Pagination = paginationParams
 
 	if !allowedSortingFields.IsValid(request.Sort) {
-		httpapi.WriteJSONResponse(
-			w,
-			http.StatusBadRequest,
-			map[string]string{
-				"error": "Invalid sort field or direction",
-			},
-		)
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "Invalid sort field or direction")
 		return
 	}
 
 	if (request.Search != nil && request.Search.isEmpty()) ||
 		(request.Filter != nil && request.Filter.isEmpty()) {
-		httpapi.WriteJSONResponse(
-			w,
-			http.StatusBadRequest,
-			map[string]string{
-				"error": "Provided search or filter must contain at least one criterion",
-			},
-		)
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, "Provided search or filter must contain at least one criterion")
 		return
 	}
 	patients, err := h.repo.FindPatients(r.Context(), request)
 	if err != nil {
-		http.Error(
-			w,
-			"failed to search patients",
-			http.StatusInternalServerError)
+		httpapi.WriteInternalError(w, r, err)
 		return
 	}
 
-	httpapi.WriteJSONResponse(w, http.StatusOK, map[string]any{
+	httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{
 		"data": patients})
 }
 

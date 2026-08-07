@@ -215,6 +215,9 @@ func TestCreateVisitMapsRepositoryErrors(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("expected status %d, got %d", test.status, response.Code)
 			}
+			if test.status == http.StatusInternalServerError {
+				assertInternalErrorEnvelope(t, response)
+			}
 		})
 	}
 }
@@ -411,6 +414,7 @@ func TestListVisitsHandlesRepositoryError(t *testing.T) {
 			response.Code,
 		)
 	}
+	assertInternalErrorEnvelope(t, response)
 }
 
 func TestListVisitsRejectsWrongMethod(t *testing.T) {
@@ -520,6 +524,9 @@ func TestDeleteVisitMapsRepositoryErrors(t *testing.T) {
 
 			if response.Code != test.status {
 				t.Fatalf("expected status %d, got %d", test.status, response.Code)
+			}
+			if test.status == http.StatusInternalServerError {
+				assertInternalErrorEnvelope(t, response)
 			}
 		})
 	}
@@ -695,18 +702,36 @@ func TestUpdateVisitMapsRepositoryErrors(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("expected status %d, got %d", test.status, response.Code)
 			}
+			if test.status == http.StatusInternalServerError {
+				assertInternalErrorEnvelope(t, response)
+			}
 			if errors.Is(test.err, ErrInvalidStatusTransition) {
 				var body struct {
-					Error string `json:"error"`
+					Message string `json:"message"`
 				}
 				if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 					t.Fatalf("decode transition error response: %v", err)
 				}
-				if body.Error != "invalid visit status transition: SCHEDULED -> CLOSED" {
-					t.Fatalf("expected clear transition error, got %q", body.Error)
+				if body.Message != "invalid visit status transition: SCHEDULED -> CLOSED" {
+					t.Fatalf("expected clear transition error, got %q", body.Message)
 				}
 			}
 		})
+	}
+}
+
+func assertInternalErrorEnvelope(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+
+	var body struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode internal error response: %v", err)
+	}
+	if body.Code != "INTERNAL_ERROR" || body.Message != "Something went wrong" {
+		t.Fatalf("internal error response = %#v", body)
 	}
 }
 
@@ -755,13 +780,13 @@ func TestPatientTimeConflictUsesSpecificMessage(t *testing.T) {
 				t.Fatalf("expected status %d, got %d", http.StatusConflict, response.Code)
 			}
 			var responseBody struct {
-				Error string `json:"error"`
+				Message string `json:"message"`
 			}
 			if err := json.NewDecoder(response.Body).Decode(&responseBody); err != nil {
 				t.Fatalf("decode response: %v", err)
 			}
-			if responseBody.Error != ErrPatientTimeConflict.Error() {
-				t.Fatalf("expected message %q, got %q", ErrPatientTimeConflict, responseBody.Error)
+			if responseBody.Message != ErrPatientTimeConflict.Error() {
+				t.Fatalf("expected message %q, got %q", ErrPatientTimeConflict, responseBody.Message)
 			}
 		})
 	}
