@@ -2,6 +2,8 @@ package v2
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,6 +32,10 @@ type fakeRepository struct {
 	deleteErr    error
 	deleteCalled bool
 	lastDelete   visit.DeleteVisitRequest
+	updatedVisit visit.Visit
+	updateErr    error
+	updateCalled bool
+	lastUpdate   visit.UpdateVisitRequest
 }
 
 func (r *fakeRepository) CreateVisit(
@@ -58,11 +64,13 @@ func (r *fakeRepository) DeleteVisit(
 	return r.deleteErr
 }
 
-func (*fakeRepository) UpdateVisit(
-	context.Context,
-	visit.UpdateVisitRequest,
+func (r *fakeRepository) UpdateVisit(
+	_ context.Context,
+	request visit.UpdateVisitRequest,
 ) (visit.Visit, error) {
-	return visit.Visit{}, nil
+	r.updateCalled = true
+	r.lastUpdate = request
+	return r.updatedVisit, r.updateErr
 }
 
 func TestRegisterVisitsCreateMatchesV1Contract(t *testing.T) {
@@ -285,5 +293,83 @@ func TestRegisterVisitsDeleteUsesV1NotFoundResponse(t *testing.T) {
 	}
 	if response.Body.String() != `{"error":"visit not found"}` {
 		t.Fatalf("DELETE /v2/visits/delete body = %s", response.Body.String())
+	}
+}
+
+func TestRegisterVisitsUpdateUsesV1Handler(t *testing.T) {
+	repository := &fakeRepository{updatedVisit: visit.Visit{
+		ID:     "44444444-4444-4444-8444-444444444444",
+		Status: visit.StatusInProgress,
+	}}
+	mux := http.NewServeMux()
+	Register(mux, visit.NewHandler(repository), visit.NewListHandler(repository))
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v2/visits/update",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444","status":"IN_PROGRESS"}`),
+	)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH /v2/visits/update status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if !repository.updateCalled || repository.lastUpdate.Status == nil || *repository.lastUpdate.Status != visit.StatusInProgress {
+		t.Fatalf("UpdateVisit() request = %#v", repository.lastUpdate)
+	}
+	if !strings.Contains(response.Body.String(), `"status":"IN_PROGRESS"`) {
+		t.Fatalf("PATCH /v2/visits/update body = %s", response.Body.String())
+	}
+}
+
+func TestRegisterVisitsUpdateUsesV1Validation(t *testing.T) {
+	repository := &fakeRepository{}
+	mux := http.NewServeMux()
+	Register(mux, visit.NewHandler(repository), visit.NewListHandler(repository))
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v2/visits/update",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444","status":"UNKNOWN"}`),
+	)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid v2 update request status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if response.Body.String() != `{"error":"invalid visit status"}` {
+		t.Fatalf("invalid v2 update request body = %s", response.Body.String())
+	}
+	if repository.updateCalled {
+		t.Fatal("UpdateVisit called for invalid request")
+	}
+}
+
+func TestRegisterVisitsUpdateUsesV1ErrorResponse(t *testing.T) {
+	repository := &fakeRepository{updateErr: fmt.Errorf("%w: SCHEDULED -> CLOSED", visit.ErrInvalidStatusTransition)}
+	mux := http.NewServeMux()
+	Register(mux, visit.NewHandler(repository), visit.NewListHandler(repository))
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v2/visits/update",
+		strings.NewReader(`{"visit_id":"44444444-4444-4444-8444-444444444444","status":"CLOSED"}`),
+	)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid v2 status transition status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode invalid v2 status transition response: %v", err)
+	}
+	if body.Error != "invalid visit status transition: SCHEDULED -> CLOSED" {
+		t.Fatalf("invalid v2 status transition body = %q", body.Error)
 	}
 }
