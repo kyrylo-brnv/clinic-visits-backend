@@ -32,6 +32,10 @@ type ListVisitsRequest struct {
 	Pagination pagination.Params
 }
 
+type ListRepository interface {
+	ListVisits(ctx context.Context, request ListVisitsRequest) ([]Visit, error)
+}
+
 type DeleteVisitRequest struct {
 	VisitID string `json:"visit_id"`
 }
@@ -56,8 +60,8 @@ func (r UpdateVisitRequest) HasChanges() bool {
 }
 
 type Repository interface {
+	ListRepository
 	CreateVisit(ctx context.Context, request CreateVisitRequest) (Visit, error)
-	ListVisits(ctx context.Context, request ListVisitsRequest) ([]Visit, error)
 	DeleteVisit(ctx context.Context, request DeleteVisitRequest) error
 	UpdateVisit(ctx context.Context, request UpdateVisitRequest) (Visit, error)
 }
