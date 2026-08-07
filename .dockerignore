@@ -1,0 +1,13 @@
+.env
+.env.*
+.git
+.gitignore
+
+**/*_test.go
+*.test
+*.coverprofile
+coverage.out
+
+bin
+tmp
+.DS_Store
