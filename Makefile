@@ -5,8 +5,8 @@ MIGRATION_DB_URL := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$
 .PHONY: dev migrate-create migrate-up migrate-down migrate-version run
 
 dev:
-	@echo "==> Dev stage: starting and waiting for Elasticsearch"
-	@docker compose up -d --wait elasticsearch
+	@echo "==> Dev stage: starting and waiting for PostgreSQL and Elasticsearch"
+	@docker compose up -d --wait postgres elasticsearch
 	@echo "==> Dev stage: applying database migrations"
 	@$(MAKE) --no-print-directory migrate-up
 	@echo "==> Dev stage: starting Clinic Visits API"

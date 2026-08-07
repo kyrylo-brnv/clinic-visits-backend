@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -17,8 +19,7 @@ import (
 
 func main() {
 	err := godotenv.Load()
-
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Fatal("Error loading environment variables:", err)
 	}
 
