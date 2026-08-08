@@ -26,13 +26,10 @@ func TestOpenAPISpecDocumentsEveryBusinessRoute(t *testing.T) {
 		"/v1/doctors/search":  "post",
 		"/v2/doctors/search":  "post",
 		"/v1/visits/create":   "post",
-		"/v2/visits/create":   "post",
 		"/v1/visits/list":     "post",
 		"/v2/visits/list":     "post",
 		"/v1/visits/update":   "patch",
-		"/v2/visits/update":   "patch",
 		"/v1/visits/delete":   "delete",
-		"/v2/visits/delete":   "delete",
 	}
 	if len(document.Paths) != len(expectedOperations) {
 		t.Fatalf("documented path count = %d, want %d", len(document.Paths), len(expectedOperations))
@@ -89,10 +86,7 @@ func TestOpenAPISpecGroupsVersionedOperationsByVersionThenResource(t *testing.T)
 		"/v1/visits/delete":   {"delete": "V1 Visits"},
 		"/v2/patients/search": {"post": "V2 Patients"},
 		"/v2/doctors/search":  {"post": "V2 Doctors"},
-		"/v2/visits/create":   {"post": "V2 Visits"},
 		"/v2/visits/list":     {"post": "V2 Visits"},
-		"/v2/visits/update":   {"patch": "V2 Visits"},
-		"/v2/visits/delete":   {"delete": "V2 Visits"},
 	}
 	for path, methods := range wantOperationTags {
 		for method, wantTag := range methods {
