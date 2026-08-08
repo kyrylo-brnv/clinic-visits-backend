@@ -35,7 +35,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	doctors.Register(mux, deps.Doctors)
 	v2doctors.Register(mux, deps.V2Doctors)
 	visits.Register(mux, deps.Visits)
-	v2visits.Register(mux, deps.Visits, deps.V2Visits)
+	v2visits.Register(mux, deps.V2Visits)
 
 	return httpapi.WithRequestID(mux)
 }

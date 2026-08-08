@@ -114,22 +114,6 @@
         }
       }
     },
-    "/v2/visits/create": {
-      "post": {
-        "tags": ["V2 Visits"],
-        "summary": "Create a visit",
-        "description": "Uses the PostgreSQL/outbox write path and preserves the v1 contract. Creates a SCHEDULED visit; doctor and patient intervals use half-open [start, end) overlap checks.",
-        "operationId": "createVisitV2",
-        "requestBody": { "$ref": "#/components/requestBodies/CreateVisit" },
-        "responses": {
-          "201": { "$ref": "#/components/responses/VisitCreated" },
-          "400": { "$ref": "#/components/responses/VisitValidationError" },
-          "404": { "$ref": "#/components/responses/RelatedEntityNotFound" },
-          "409": { "$ref": "#/components/responses/VisitTimeConflict" },
-          "500": { "$ref": "#/components/responses/InternalServerError" }
-        }
-      }
-    },
     "/v1/visits/list": {
       "post": {
         "tags": ["V1 Visits"],
@@ -178,42 +162,11 @@
         }
       }
     },
-    "/v2/visits/update": {
-      "patch": {
-        "tags": ["V2 Visits"],
-        "summary": "Update a visit",
-        "description": "Uses the PostgreSQL/outbox write path, preserves the v1 contract, and enforces the visit status state machine.",
-        "operationId": "updateVisitV2",
-        "requestBody": { "$ref": "#/components/requestBodies/UpdateVisit" },
-        "responses": {
-          "200": { "$ref": "#/components/responses/VisitUpdated" },
-          "400": { "$ref": "#/components/responses/VisitValidationError" },
-          "404": { "$ref": "#/components/responses/VisitOrRelatedEntityNotFound" },
-          "409": { "$ref": "#/components/responses/VisitTimeConflict" },
-          "500": { "$ref": "#/components/responses/InternalServerError" }
-        }
-      }
-    },
     "/v1/visits/delete": {
       "delete": {
         "tags": ["V1 Visits"],
         "summary": "Delete a visit",
         "operationId": "deleteVisitV1",
-        "requestBody": { "$ref": "#/components/requestBodies/DeleteVisit" },
-        "responses": {
-          "204": { "description": "Visit deleted successfully; the response has no body." },
-          "400": { "$ref": "#/components/responses/VisitValidationError" },
-          "404": { "$ref": "#/components/responses/VisitNotFound" },
-          "500": { "$ref": "#/components/responses/InternalServerError" }
-        }
-      }
-    },
-    "/v2/visits/delete": {
-      "delete": {
-        "tags": ["V2 Visits"],
-        "summary": "Delete a visit",
-        "description": "Uses the PostgreSQL/outbox write path and preserves the v1 contract.",
-        "operationId": "deleteVisitV2",
         "requestBody": { "$ref": "#/components/requestBodies/DeleteVisit" },
         "responses": {
           "204": { "description": "Visit deleted successfully; the response has no body." },
