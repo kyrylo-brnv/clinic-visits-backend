@@ -41,12 +41,12 @@ make dev
 Elasticsearch service, applies migrations, and runs the Go API in the
 foreground. Wait for `Clinic Visits API is ready at
 http://localhost:8080/health` before starting integration or Playwright tests.
-The API checks Elasticsearch health and idempotently creates the
-`clinic-visits-bootstrap-v1` index. After initialization, verify the index
-with:
+The API checks Elasticsearch health, idempotently initializes and backfills
+the `doctors-v1`, `visits-v1`, `patients-v1`, and `clinics-v1` indices from
+PostgreSQL. After initialization, verify an index with:
 
 ```sh
-curl --head http://localhost:9200/clinic-visits-bootstrap-v1
+curl --head http://localhost:9200/doctors-v1
 ```
 
 Stop the local dependencies while preserving their data with:
@@ -55,9 +55,33 @@ Stop the local dependencies while preserving their data with:
 docker compose stop
 ```
 
+## Production and cloud deployment
+
+Configure the API through runtime environment variables. Supply credentials
+from the platform's secret manager; do not put production values in source
+control.
+
+| Variable | Purpose |
+| --- | --- |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE` | PostgreSQL connection |
+| `ELASTICSEARCH_URL` | Absolute HTTP or HTTPS Elasticsearch URL |
+| `HTTP_PORT` | API listen port |
+
+Run migrations as a one-off deployment job before starting the API. The API
+must start only after PostgreSQL migrations complete and Elasticsearch is
+available. During startup it checks Elasticsearch health, initializes and
+backfills the four versioned indices (`doctors-v1`, `visits-v1`,
+`patients-v1`, and `clinics-v1`) before accepting traffic. Use `GET /health`
+as the readiness endpoint.
+
+Use persistent storage for both PostgreSQL and Elasticsearch. PostgreSQL is
+the source of truth for writes and durable data; Elasticsearch is a
+denormalized read model for search and v2 reads, and can be rebuilt from
+PostgreSQL when needed.
+
 ## API documentation
 
-With the API running, open the Swagger UI at
-[http://localhost:8080/docs](http://localhost:8080/docs). The OpenAPI 3.0 JSON
-document is available directly at
+With the API running, the Swagger UI is served at `/docs` and the OpenAPI 3.0
+JSON document at `/openapi.json`. Locally, open
+[http://localhost:8080/docs](http://localhost:8080/docs) or
 [http://localhost:8080/openapi.json](http://localhost:8080/openapi.json).
