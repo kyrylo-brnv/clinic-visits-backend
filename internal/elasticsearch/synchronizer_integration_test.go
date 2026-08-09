@@ -62,6 +62,109 @@ func TestPostgresVisitSyncSnapshotLoaderRebuildsOldAndCurrentRelations(t *testin
 	}
 }
 
+func TestPostgresDeltaSyncSnapshotLoaderBuildsEveryTargetIndex(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	pool, err := pgxpool.New(t.Context(), databaseURL)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	if err := pool.Ping(t.Context()); err != nil {
+		pool.Close()
+		t.Fatalf("ping PostgreSQL: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	fixture := insertVisitSyncFixture(t, pool)
+	t.Cleanup(func() { deleteVisitSyncFixture(t, pool, fixture) })
+	var missingVisitID string
+	if err := pool.QueryRow(t.Context(), "SELECT gen_random_uuid()::text").Scan(&missingVisitID); err != nil {
+		t.Fatalf("create missing visit ID: %v", err)
+	}
+
+	loader := &postgresDeltaSyncSnapshotLoader{pool: pool}
+	for _, testCase := range []struct {
+		indexName string
+		id        string
+		assert    func(*testing.T, deltaSyncSnapshot)
+	}{
+		{
+			indexName: DoctorsIndexName,
+			id:        fixture.newDoctorID,
+			assert: func(t *testing.T, snapshot deltaSyncSnapshot) {
+				document, ok := snapshot.doctors[fixture.newDoctorID]
+				if !ok || len(document.Visits) != 1 || document.Visits[0].ID != fixture.visitID {
+					t.Fatalf("doctor document = %#v", document)
+				}
+			},
+		},
+		{
+			indexName: PatientsIndexName,
+			id:        fixture.newPatientID,
+			assert: func(t *testing.T, snapshot deltaSyncSnapshot) {
+				document, ok := snapshot.patients[fixture.newPatientID]
+				if !ok || len(document.Visits) != 1 || document.Visits[0].ID != fixture.visitID {
+					t.Fatalf("patient document = %#v", document)
+				}
+			},
+		},
+		{
+			indexName: ClinicsIndexName,
+			id:        fixture.newClinicID,
+			assert: func(t *testing.T, snapshot deltaSyncSnapshot) {
+				document, ok := snapshot.clinics[fixture.newClinicID]
+				if !ok || len(document.Visits) != 1 || document.Visits[0].ID != fixture.visitID {
+					t.Fatalf("clinic document = %#v", document)
+				}
+			},
+		},
+	} {
+		testCase := testCase
+		t.Run(testCase.indexName, func(t *testing.T) {
+			hints := newDeltaSyncHints()
+			hints.visits[missingVisitID] = struct{}{}
+			snapshot, err := loader.Load(t.Context(), testCase.indexName, []string{testCase.id}, hints)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			testCase.assert(t, snapshot)
+			if document, ok := snapshot.visits[fixture.visitID]; !ok || document.ID != fixture.visitID {
+				t.Fatalf("dependent visit document = %#v, found=%t", document, ok)
+			}
+			if _, ok := snapshot.visitIDs[missingVisitID]; !ok {
+				t.Fatalf("missing indexed visit ID was not retained for deletion: %#v", snapshot.visitIDs)
+			}
+			if _, ok := snapshot.visits[missingVisitID]; ok {
+				t.Fatalf("missing visit unexpectedly loaded: %#v", snapshot.visits[missingVisitID])
+			}
+		})
+	}
+
+	hints := newDeltaSyncHints()
+	hints.relations = relationIDs(
+		[]string{fixture.oldDoctorID}, []string{fixture.oldPatientID}, []string{fixture.oldClinicID},
+	)
+	snapshot, err := loader.Load(t.Context(), VisitsIndexName, []string{fixture.visitID}, hints)
+	if err != nil {
+		t.Fatalf("load visit target: %v", err)
+	}
+	if snapshot.visits[fixture.visitID].DoctorID != fixture.newDoctorID {
+		t.Fatalf("current visit document = %#v", snapshot.visits[fixture.visitID])
+	}
+	if len(snapshot.doctors[fixture.oldDoctorID].Visits) != 0 || len(snapshot.doctors[fixture.newDoctorID].Visits) != 1 {
+		t.Fatalf("old/new doctor documents = %#v / %#v", snapshot.doctors[fixture.oldDoctorID], snapshot.doctors[fixture.newDoctorID])
+	}
+	if len(snapshot.patients[fixture.oldPatientID].Visits) != 0 || len(snapshot.patients[fixture.newPatientID].Visits) != 1 {
+		t.Fatalf("old/new patient documents = %#v / %#v", snapshot.patients[fixture.oldPatientID], snapshot.patients[fixture.newPatientID])
+	}
+	if len(snapshot.clinics[fixture.oldClinicID].Visits) != 0 || len(snapshot.clinics[fixture.newClinicID].Visits) != 1 {
+		t.Fatalf("old/new clinic documents = %#v / %#v", snapshot.clinics[fixture.oldClinicID], snapshot.clinics[fixture.newClinicID])
+	}
+}
+
 type visitSyncFixture struct {
 	visitID                  string
 	oldDoctorID, newDoctorID string
