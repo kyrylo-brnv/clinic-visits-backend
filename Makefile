@@ -2,7 +2,7 @@ include .env
 
 MIGRATION_DB_URL := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
 
-.PHONY: dev migrate-create migrate-up migrate-down migrate-version run
+.PHONY: dev backfill migrate-create migrate-up migrate-down migrate-version run
 
 dev:
 	@echo "==> Dev stage: starting and waiting for PostgreSQL and Elasticsearch"
@@ -11,6 +11,9 @@ dev:
 	@$(MAKE) --no-print-directory migrate-up
 	@echo "==> Dev stage: starting Clinic Visits API"
 	@go run ./cmd/api
+
+backfill: migrate-up
+	@go run ./cmd/backfill
 
 migrate-create:
 	@test -n "$(name)" || (echo "Usage: make migrate-create name=create_doctors"; exit 1)

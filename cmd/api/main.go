@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -15,7 +17,10 @@ import (
 	"github.com/smithautotest/clinic-visits/internal/config"
 	"github.com/smithautotest/clinic-visits/internal/database"
 	"github.com/smithautotest/clinic-visits/internal/elasticsearch"
+	"github.com/smithautotest/clinic-visits/internal/outbox"
 )
+
+const apiShutdownTimeout = 10 * time.Second
 
 func main() {
 	err := godotenv.Load()
@@ -49,14 +54,15 @@ func main() {
 		log.Fatal("Error creating Elasticsearch client:", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	if err := elasticsearchClient.Initialize(ctx); err != nil {
+	appContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	initializationContext, cancelInitialization := context.WithTimeout(appContext, 5*time.Minute)
+	if err := elasticsearchClient.Initialize(initializationContext); err != nil {
+		cancelInitialization()
 		log.Fatal("Error initializing Elasticsearch:", err)
 	}
-	if err := elasticsearch.Backfill(ctx, pool, elasticsearchClient); err != nil {
-		log.Fatal("Error backfilling Elasticsearch:", err)
-	}
+	cancelInitialization()
 
 	router := app.New(pool, elasticsearchClient)
 	address := ":" + strconv.Itoa(appServerConfig.HTTPPort)
@@ -65,6 +71,47 @@ func main() {
 		log.Fatalf("Error binding HTTP server on %s: %v", address, err)
 	}
 
+	processor := outbox.NewProcessor(
+		pool,
+		elasticsearch.NewVisitEventConsumer(pool, elasticsearchClient),
+	)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		outbox.RunWorker(appContext, processor, func(err error) {
+			log.Printf("Error synchronizing visit outbox events; will retry: %v", err)
+		})
+	}()
+
+	server := &http.Server{Handler: router}
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.Serve(listener)
+	}()
+
 	log.Printf("Clinic Visits API is ready at http://localhost:%d/health", appServerConfig.HTTPPort)
-	log.Fatal(http.Serve(listener, router))
+	select {
+	case err := <-serverErrors:
+		stop()
+		<-workerDone
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal("Error serving Clinic Visits API:", err)
+		}
+	case <-appContext.Done():
+		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), apiShutdownTimeout)
+		shutdownErr := server.Shutdown(shutdownContext)
+		cancelShutdown()
+		if shutdownErr != nil {
+			_ = server.Close()
+		}
+
+		serveErr := <-serverErrors
+		<-workerDone
+		if shutdownErr != nil {
+			log.Fatal("Error shutting down Clinic Visits API:", shutdownErr)
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			log.Fatal("Error serving Clinic Visits API:", serveErr)
+		}
+	}
 }

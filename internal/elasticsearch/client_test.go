@@ -431,6 +431,73 @@ func TestInitializeSucceedsWhenIndexIsCreatedConcurrently(t *testing.T) {
 	}
 }
 
+func TestRecreateIndicesRemovesStaleDocumentsBeforeRecreatingMappings(t *testing.T) {
+	indexExists := make(map[string]bool, len(indexDefinitions))
+	documents := make(map[string]map[string]struct{}, len(indexDefinitions))
+	for _, definition := range indexDefinitions {
+		if definition.name == ClinicsIndexName {
+			continue
+		}
+		indexExists[definition.name] = true
+		documents[definition.name] = map[string]struct{}{"stale-document": {}}
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		indexName := strings.TrimPrefix(request.URL.Path, "/")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/_cluster/health":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"status":"green","timed_out":false}`))
+		case request.Method == http.MethodDelete:
+			if !indexExists[indexName] {
+				response.WriteHeader(http.StatusNotFound)
+				return
+			}
+			indexExists[indexName] = false
+			delete(documents, indexName)
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"acknowledged":true}`))
+		case request.Method == http.MethodHead:
+			if !indexExists[indexName] {
+				response.WriteHeader(http.StatusNotFound)
+			}
+		case request.Method == http.MethodPut:
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Errorf("decode create index request: %v", err)
+				response.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assertIndexMapping(t, indexName, body)
+			indexExists[indexName] = true
+			documents[indexName] = make(map[string]struct{})
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"acknowledged":true}`))
+		default:
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(&config.ElasticsearchConfig{URL: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if err := client.RecreateIndices(t.Context()); err != nil {
+		t.Fatalf("RecreateIndices() error = %v", err)
+	}
+
+	for _, definition := range indexDefinitions {
+		if !indexExists[definition.name] {
+			t.Errorf("index %q was not recreated", definition.name)
+		}
+		if len(documents[definition.name]) != 0 {
+			t.Errorf("index %q retained stale documents: %v", definition.name, documents[definition.name])
+		}
+	}
+}
+
 func TestInitializeFailsForUnexpectedIndexCreationError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
