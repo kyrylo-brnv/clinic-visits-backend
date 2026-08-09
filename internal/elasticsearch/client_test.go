@@ -498,6 +498,85 @@ func TestRecreateIndicesRemovesStaleDocumentsBeforeRecreatingMappings(t *testing
 	}
 }
 
+func TestRecreateIndexRemovesStaleDocumentsOnlyFromSelectedIndex(t *testing.T) {
+	indexExists := make(map[string]bool, len(indexDefinitions))
+	documents := make(map[string]map[string]struct{}, len(indexDefinitions))
+	for _, definition := range indexDefinitions {
+		indexExists[definition.name] = true
+		documents[definition.name] = map[string]struct{}{"stale-document": {}}
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		indexName := strings.TrimPrefix(request.URL.Path, "/")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/_cluster/health":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"status":"green","timed_out":false}`))
+		case request.Method == http.MethodDelete:
+			if !indexExists[indexName] {
+				response.WriteHeader(http.StatusNotFound)
+				return
+			}
+			indexExists[indexName] = false
+			delete(documents, indexName)
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"acknowledged":true}`))
+		case request.Method == http.MethodHead:
+			if !indexExists[indexName] {
+				response.WriteHeader(http.StatusNotFound)
+			}
+		case request.Method == http.MethodPut:
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Errorf("decode create index request: %v", err)
+				response.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assertIndexMapping(t, indexName, body)
+			indexExists[indexName] = true
+			documents[indexName] = make(map[string]struct{})
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"acknowledged":true}`))
+		default:
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(&config.ElasticsearchConfig{URL: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if err := client.RecreateIndex(t.Context(), PatientsIndexName); err != nil {
+		t.Fatalf("RecreateIndex() error = %v", err)
+	}
+
+	for _, definition := range indexDefinitions {
+		if !indexExists[definition.name] {
+			t.Errorf("index %q was removed", definition.name)
+		}
+		if definition.name == PatientsIndexName {
+			if len(documents[definition.name]) != 0 {
+				t.Errorf("selected index %q retained stale documents: %v", definition.name, documents[definition.name])
+			}
+			continue
+		}
+		if len(documents[definition.name]) != 1 {
+			t.Errorf("unselected index %q documents = %v, want unchanged", definition.name, documents[definition.name])
+		}
+	}
+}
+
+func TestRecreateIndexRejectsUnsupportedIndexBeforeElasticsearchWork(t *testing.T) {
+	client := &Client{}
+
+	err := client.RecreateIndex(t.Context(), "unknown-v1")
+	if err == nil || !strings.Contains(err.Error(), `unsupported Elasticsearch index "unknown-v1"`) {
+		t.Fatalf("RecreateIndex() error = %v", err)
+	}
+}
+
 func TestInitializeFailsForUnexpectedIndexCreationError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {

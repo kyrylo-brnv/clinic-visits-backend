@@ -220,6 +220,44 @@ func (c *Client) RecreateIndices(ctx context.Context) error {
 	return c.ensureIndices(ctx)
 }
 
+// RecreateIndex removes all documents from one supported versioned read-model
+// index and recreates it with its configured mapping.
+func (c *Client) RecreateIndex(ctx context.Context, indexName string) error {
+	definition, err := indexDefinitionForName(indexName)
+	if err != nil {
+		return err
+	}
+
+	if err := c.checkHealth(ctx); err != nil {
+		return fmt.Errorf("check elasticsearch health: %w", err)
+	}
+	if err := c.deleteIndex(ctx, definition.name); err != nil {
+		return fmt.Errorf("delete elasticsearch index %q: %w", definition.name, err)
+	}
+	if err := c.ensureIndex(ctx, definition); err != nil {
+		return fmt.Errorf("ensure elasticsearch index %q: %w", definition.name, err)
+	}
+
+	return nil
+}
+
+// ValidateIndexName confirms that indexName is a supported versioned
+// Elasticsearch read-model index.
+func ValidateIndexName(indexName string) error {
+	_, err := indexDefinitionForName(indexName)
+	return err
+}
+
+func indexDefinitionForName(indexName string) (indexDefinition, error) {
+	for _, definition := range indexDefinitions {
+		if definition.name == indexName {
+			return definition, nil
+		}
+	}
+
+	return indexDefinition{}, fmt.Errorf("unsupported Elasticsearch index %q; supported indexes: %s, %s, %s, %s", indexName, DoctorsIndexName, PatientsIndexName, ClinicsIndexName, VisitsIndexName)
+}
+
 func (c *Client) ensureIndices(ctx context.Context) error {
 	for _, definition := range indexDefinitions {
 		if err := c.ensureIndex(ctx, definition); err != nil {

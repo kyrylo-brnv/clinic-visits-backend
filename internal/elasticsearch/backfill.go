@@ -49,6 +49,30 @@ func Backfill(ctx context.Context, pool *pgxpool.Pool, client *Client) error {
 	return nil
 }
 
+// BackfillIndex loads one consistent PostgreSQL snapshot, builds the existing
+// enriched read models, and upserts documents only into indexName.
+func BackfillIndex(ctx context.Context, pool *pgxpool.Pool, client *Client, indexName string) error {
+	if err := ValidateIndexName(indexName); err != nil {
+		return err
+	}
+
+	rows, err := loadBackfillRows(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("load PostgreSQL backfill snapshot: %w", err)
+	}
+
+	documents, err := buildBackfillDocuments(rows)
+	if err != nil {
+		return fmt.Errorf("build Elasticsearch backfill documents: %w", err)
+	}
+
+	if err := upsertBackfillDocumentsForIndex(ctx, client, indexName, documents); err != nil {
+		return fmt.Errorf("upsert Elasticsearch backfill documents: %w", err)
+	}
+
+	return nil
+}
+
 func loadBackfillRows(ctx context.Context, pool *pgxpool.Pool) (backfillRows, error) {
 	transaction, err := pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -259,24 +283,35 @@ func buildBackfillDocuments(rows backfillRows) (backfillDocuments, error) {
 }
 
 func upsertBackfillDocuments(ctx context.Context, client documentUpserter, documents backfillDocuments) error {
-	for _, document := range documents.doctors {
-		if err := client.UpsertDocument(ctx, DoctorsIndexName, document.ID, document); err != nil {
-			return fmt.Errorf("upsert doctor %s: %w", document.ID, err)
+	for _, indexName := range []string{DoctorsIndexName, PatientsIndexName, ClinicsIndexName, VisitsIndexName} {
+		if err := upsertBackfillDocumentsForIndex(ctx, client, indexName, documents); err != nil {
+			return err
 		}
 	}
-	for _, document := range documents.patients {
-		if err := client.UpsertDocument(ctx, PatientsIndexName, document.ID, document); err != nil {
-			return fmt.Errorf("upsert patient %s: %w", document.ID, err)
-		}
+
+	return nil
+}
+
+func upsertBackfillDocumentsForIndex(ctx context.Context, client documentUpserter, indexName string, documents backfillDocuments) error {
+	switch indexName {
+	case DoctorsIndexName:
+		return upsertDocuments(ctx, client, indexName, "doctor", documents.doctors, func(document DoctorDocument) string { return document.ID })
+	case PatientsIndexName:
+		return upsertDocuments(ctx, client, indexName, "patient", documents.patients, func(document PatientDocument) string { return document.ID })
+	case ClinicsIndexName:
+		return upsertDocuments(ctx, client, indexName, "clinic", documents.clinics, func(document ClinicDocument) string { return document.ID })
+	case VisitsIndexName:
+		return upsertDocuments(ctx, client, indexName, "visit", documents.visits, func(document VisitDocument) string { return document.ID })
+	default:
+		return ValidateIndexName(indexName)
 	}
-	for _, document := range documents.clinics {
-		if err := client.UpsertDocument(ctx, ClinicsIndexName, document.ID, document); err != nil {
-			return fmt.Errorf("upsert clinic %s: %w", document.ID, err)
-		}
-	}
-	for _, document := range documents.visits {
-		if err := client.UpsertDocument(ctx, VisitsIndexName, document.ID, document); err != nil {
-			return fmt.Errorf("upsert visit %s: %w", document.ID, err)
+}
+
+func upsertDocuments[T any](ctx context.Context, client documentUpserter, indexName, entityName string, documents []T, id func(T) string) error {
+	for _, document := range documents {
+		documentID := id(document)
+		if err := client.UpsertDocument(ctx, indexName, documentID, document); err != nil {
+			return fmt.Errorf("upsert %s %s: %w", entityName, documentID, err)
 		}
 	}
 
