@@ -37,8 +37,11 @@ func TestVisitEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *test
 		[]string{testOldPatientID, testNewPatientID},
 		[]string{testOldClinicID, testNewClinicID},
 	)
-	snapshot := visitSyncSnapshot{
-		visit: &currentVisit,
+	snapshot := deltaSyncSnapshot{
+		indexName: VisitsIndexName,
+		targets:   stringSet(testVisitID),
+		visits:    map[string]VisitDocument{testVisitID: currentVisit},
+		visitIDs:  stringSet(testVisitID),
 		doctors: map[string]DoctorDocument{
 			testOldDoctorID: {ID: testOldDoctorID, Visits: []VisitSummary{}},
 			testNewDoctorID: {ID: testNewDoctorID, Visits: []VisitSummary{{ID: testVisitID}}},
@@ -53,27 +56,27 @@ func TestVisitEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *test
 		},
 		relations: relations,
 	}
-	loader := &stubVisitSyncLoader{snapshot: snapshot}
+	loader := &recordingDeltaLoader{snapshot: snapshot}
 	store := &recordingVisitDocumentStore{indexedVisit: &indexedVisit}
-	consumer := &visitEventConsumer{loader: loader, store: store}
+	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
 
 	err := consumer.Consume(t.Context(), outbox.PersistedEvent{
 		AggregateType: outbox.AggregateTypeVisit,
 		AggregateID:   testVisitID,
 		EventType:     outbox.EventTypeVisitUpdated,
-		Payload:       visitEventPayload(indexedVisit),
+		Payload:       visitEventPayload(currentVisit),
 	})
 	if err != nil {
 		t.Fatalf("Consume() error = %v", err)
 	}
 
 	wantLoadedRelations := relationIDs(
-		[]string{testOldDoctorID},
-		[]string{testOldPatientID},
-		[]string{testOldClinicID},
+		[]string{testOldDoctorID, testNewDoctorID},
+		[]string{testOldPatientID, testNewPatientID},
+		[]string{testOldClinicID, testNewClinicID},
 	)
-	if !reflect.DeepEqual(loader.relations, wantLoadedRelations) {
-		t.Fatalf("loader relations = %#v, want %#v", loader.relations, wantLoadedRelations)
+	if !reflect.DeepEqual(loader.hints.relations, wantLoadedRelations) {
+		t.Fatalf("loader relations = %#v, want %#v", loader.hints.relations, wantLoadedRelations)
 	}
 	wantCalls := []documentStoreCall{
 		{operation: "upsert", index: DoctorsIndexName, id: testOldDoctorID, document: snapshot.doctors[testOldDoctorID]},
@@ -92,26 +95,31 @@ func TestVisitEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *test
 func TestVisitEventConsumerDeletesMissingVisitAfterRefreshingRelations(t *testing.T) {
 	t.Parallel()
 
-	indexedVisit := VisitDocument{
+	deletedVisit := VisitDocument{
 		ID: testVisitID, DoctorID: testOldDoctorID, PatientID: testOldPatientID, ClinicID: testOldClinicID,
 	}
 	relations := relationIDs(
 		[]string{testOldDoctorID}, []string{testOldPatientID}, []string{testOldClinicID},
 	)
-	snapshot := visitSyncSnapshot{
+	snapshot := deltaSyncSnapshot{
+		indexName: VisitsIndexName,
+		targets:   stringSet(testVisitID),
+		visits:    map[string]VisitDocument{},
+		visitIDs:  stringSet(testVisitID),
 		doctors:   map[string]DoctorDocument{testOldDoctorID: {ID: testOldDoctorID, Visits: []VisitSummary{}}},
 		patients:  map[string]PatientDocument{testOldPatientID: {ID: testOldPatientID, Visits: []VisitSummary{}}},
 		clinics:   map[string]ClinicDocument{testOldClinicID: {ID: testOldClinicID, Visits: []VisitSummary{}}},
 		relations: relations,
 	}
-	store := &recordingVisitDocumentStore{indexedVisit: &indexedVisit}
-	consumer := &visitEventConsumer{loader: &stubVisitSyncLoader{snapshot: snapshot}, store: store}
+	loader := &recordingDeltaLoader{snapshot: snapshot}
+	store := &recordingVisitDocumentStore{}
+	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
 
 	if err := consumer.Consume(t.Context(), outbox.PersistedEvent{
 		AggregateType: outbox.AggregateTypeVisit,
 		AggregateID:   testVisitID,
 		EventType:     outbox.EventTypeVisitDeleted,
-		Payload:       visitEventPayload(indexedVisit),
+		Payload:       visitEventPayload(deletedVisit),
 	}); err != nil {
 		t.Fatalf("Consume() error = %v", err)
 	}
@@ -122,6 +130,9 @@ func TestVisitEventConsumerDeletesMissingVisitAfterRefreshingRelations(t *testin
 	}
 	if len(store.calls) != 4 {
 		t.Fatalf("document call count = %d, want 4", len(store.calls))
+	}
+	if !reflect.DeepEqual(loader.hints.relations, relations) {
+		t.Fatalf("loader relations = %#v, want event payload relations %#v", loader.hints.relations, relations)
 	}
 }
 
@@ -147,8 +158,12 @@ func TestVisitEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T)
 	indexedVisit := VisitDocument{
 		ID: testVisitID, DoctorID: testOldDoctorID, PatientID: testOldPatientID, ClinicID: testOldClinicID,
 	}
-	snapshot := visitSyncSnapshot{
-		visit:     &VisitDocument{ID: testVisitID, DoctorID: testNewDoctorID},
+	currentVisit := VisitDocument{ID: testVisitID, DoctorID: testNewDoctorID}
+	snapshot := deltaSyncSnapshot{
+		indexName: VisitsIndexName,
+		targets:   stringSet(testVisitID),
+		visits:    map[string]VisitDocument{testVisitID: currentVisit},
+		visitIDs:  stringSet(testVisitID),
 		doctors:   map[string]DoctorDocument{testOldDoctorID: {ID: testOldDoctorID}},
 		patients:  map[string]PatientDocument{},
 		clinics:   map[string]ClinicDocument{},
@@ -156,7 +171,9 @@ func TestVisitEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T)
 	}
 	failure := errors.New("Elasticsearch unavailable")
 	store := &recordingVisitDocumentStore{indexedVisit: &indexedVisit, failAtWrite: 1, err: failure}
-	consumer := &visitEventConsumer{loader: &stubVisitSyncLoader{snapshot: snapshot}, store: store}
+	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{
+		loader: &recordingDeltaLoader{snapshot: snapshot}, store: store,
+	}}
 
 	err := consumer.Consume(t.Context(), outbox.PersistedEvent{
 		AggregateType: outbox.AggregateTypeVisit,
@@ -183,8 +200,11 @@ func TestVisitEventConsumerCanRetryAfterVisitWriteFailure(t *testing.T) {
 	relations := relationIDs(
 		[]string{testNewDoctorID}, []string{testNewPatientID}, []string{testNewClinicID},
 	)
-	snapshot := visitSyncSnapshot{
-		visit:     &currentVisit,
+	snapshot := deltaSyncSnapshot{
+		indexName: VisitsIndexName,
+		targets:   stringSet(testVisitID),
+		visits:    map[string]VisitDocument{testVisitID: currentVisit},
+		visitIDs:  stringSet(testVisitID),
 		doctors:   map[string]DoctorDocument{testNewDoctorID: {ID: testNewDoctorID}},
 		patients:  map[string]PatientDocument{testNewPatientID: {ID: testNewPatientID}},
 		clinics:   map[string]ClinicDocument{testNewClinicID: {ID: testNewClinicID}},
@@ -192,7 +212,9 @@ func TestVisitEventConsumerCanRetryAfterVisitWriteFailure(t *testing.T) {
 	}
 	failure := errors.New("visit index unavailable")
 	store := &recordingVisitDocumentStore{failAtWrite: 4, err: failure}
-	consumer := &visitEventConsumer{loader: &stubVisitSyncLoader{snapshot: snapshot}, store: store}
+	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{
+		loader: &recordingDeltaLoader{snapshot: snapshot}, store: store,
+	}}
 	event := outbox.PersistedEvent{
 		AggregateType: outbox.AggregateTypeVisit,
 		AggregateID:   testVisitID,
@@ -225,9 +247,9 @@ func TestVisitEventConsumerRejectsUnsupportedEventsBeforeSynchronization(t *test
 		{AggregateType: outbox.AggregateTypeVisit, AggregateID: testVisitID, EventType: outbox.EventTypeVisitCreated, Payload: []byte("{")},
 	}
 	for _, event := range tests {
-		loader := &stubVisitSyncLoader{}
+		loader := &recordingDeltaLoader{}
 		store := &recordingVisitDocumentStore{}
-		consumer := &visitEventConsumer{loader: loader, store: store}
+		consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
 
 		if err := consumer.Consume(t.Context(), event); err == nil {
 			t.Fatalf("Consume(%+v) error = nil, want rejection", event)
@@ -242,11 +264,9 @@ func TestAddSyncVisitSummariesMaintainsOnlyLoadedEntityDocuments(t *testing.T) {
 	t.Parallel()
 
 	visitStart := time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC)
-	snapshot := visitSyncSnapshot{
-		doctors:  map[string]DoctorDocument{testOldDoctorID: {ID: testOldDoctorID, Visits: []VisitSummary{}}},
-		patients: map[string]PatientDocument{testOldPatientID: {ID: testOldPatientID, Visits: []VisitSummary{}}},
-		clinics:  map[string]ClinicDocument{testOldClinicID: {ID: testOldClinicID, Visits: []VisitSummary{}}},
-	}
+	doctors := map[string]DoctorDocument{testOldDoctorID: {ID: testOldDoctorID, Visits: []VisitSummary{}}}
+	patients := map[string]PatientDocument{testOldPatientID: {ID: testOldPatientID, Visits: []VisitSummary{}}}
+	clinics := map[string]ClinicDocument{testOldClinicID: {ID: testOldClinicID, Visits: []VisitSummary{}}}
 	rows := []sqlc.ListVisitSummariesForElasticsearchSyncRow{
 		{
 			ID: testVisitID, DoctorID: testOldDoctorID, PatientID: testOldPatientID, ClinicID: testOldClinicID,
@@ -263,16 +283,16 @@ func TestAddSyncVisitSummariesMaintainsOnlyLoadedEntityDocuments(t *testing.T) {
 		},
 	}
 
-	if err := addSyncVisitSummaries(snapshot, rows); err != nil {
+	if err := addSyncVisitSummaries(doctors, patients, clinics, rows); err != nil {
 		t.Fatalf("addSyncVisitSummaries() error = %v", err)
 	}
-	if got := snapshot.doctors[testOldDoctorID].Visits; len(got) != 1 || got[0].ID != testVisitID {
+	if got := doctors[testOldDoctorID].Visits; len(got) != 1 || got[0].ID != testVisitID {
 		t.Fatalf("doctor visits = %#v", got)
 	}
-	if got := snapshot.patients[testOldPatientID].Visits; len(got) != 1 || got[0].ID != testVisitID {
+	if got := patients[testOldPatientID].Visits; len(got) != 1 || got[0].ID != testVisitID {
 		t.Fatalf("patient visits = %#v", got)
 	}
-	if got := snapshot.clinics[testOldClinicID].Visits; len(got) != 1 || got[0].ID != testVisitID {
+	if got := clinics[testOldClinicID].Visits; len(got) != 1 || got[0].ID != testVisitID {
 		t.Fatalf("clinic visits = %#v", got)
 	}
 }
@@ -284,19 +304,6 @@ func TestMapSyncVisitDocumentRejectsNullRequiredFields(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "has null visit_start_time") {
 		t.Fatalf("mapSyncVisitDocument() error = %v", err)
 	}
-}
-
-type stubVisitSyncLoader struct {
-	snapshot  visitSyncSnapshot
-	err       error
-	calls     int
-	relations visitRelationIDs
-}
-
-func (l *stubVisitSyncLoader) Load(_ context.Context, _ string, relations visitRelationIDs) (visitSyncSnapshot, error) {
-	l.calls++
-	l.relations = cloneRelationIDs(relations)
-	return l.snapshot, l.err
 }
 
 type documentStoreCall struct {
@@ -363,10 +370,6 @@ func relationIDs(doctors, patients, clinics []string) visitRelationIDs {
 		ids.clinics[id] = struct{}{}
 	}
 	return ids
-}
-
-func cloneRelationIDs(ids visitRelationIDs) visitRelationIDs {
-	return relationIDs(sortedKeys(ids.doctors), sortedKeys(ids.patients), sortedKeys(ids.clinics))
 }
 
 func visitEventPayload(visit VisitDocument) []byte {

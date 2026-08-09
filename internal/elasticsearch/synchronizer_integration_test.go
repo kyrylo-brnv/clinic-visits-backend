@@ -11,57 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestPostgresVisitSyncSnapshotLoaderRebuildsOldAndCurrentRelations(t *testing.T) {
-	databaseURL := os.Getenv("TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("TEST_DATABASE_URL is not set")
-	}
-
-	pool, err := pgxpool.New(t.Context(), databaseURL)
-	if err != nil {
-		t.Fatalf("connect to PostgreSQL: %v", err)
-	}
-	if err := pool.Ping(t.Context()); err != nil {
-		pool.Close()
-		t.Fatalf("ping PostgreSQL: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	fixture := insertVisitSyncFixture(t, pool)
-	t.Cleanup(func() { deleteVisitSyncFixture(t, pool, fixture) })
-
-	loader := &postgresVisitSyncSnapshotLoader{pool: pool}
-	snapshot, err := loader.Load(t.Context(), fixture.visitID, relationIDs(
-		[]string{fixture.oldDoctorID},
-		[]string{fixture.oldPatientID},
-		[]string{fixture.oldClinicID},
-	))
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	if snapshot.visit == nil || snapshot.visit.ID != fixture.visitID ||
-		snapshot.visit.DoctorID != fixture.newDoctorID ||
-		snapshot.visit.PatientID != fixture.newPatientID ||
-		snapshot.visit.ClinicID != fixture.newClinicID {
-		t.Fatalf("current visit document = %#v", snapshot.visit)
-	}
-	if len(snapshot.doctors[fixture.oldDoctorID].Visits) != 0 ||
-		len(snapshot.patients[fixture.oldPatientID].Visits) != 0 ||
-		len(snapshot.clinics[fixture.oldClinicID].Visits) != 0 {
-		t.Fatal("old related documents still contain the reassigned visit")
-	}
-	if visits := snapshot.doctors[fixture.newDoctorID].Visits; len(visits) != 1 || visits[0].ID != fixture.visitID {
-		t.Fatalf("new doctor visits = %#v", visits)
-	}
-	if visits := snapshot.patients[fixture.newPatientID].Visits; len(visits) != 1 || visits[0].ID != fixture.visitID {
-		t.Fatalf("new patient visits = %#v", visits)
-	}
-	if visits := snapshot.clinics[fixture.newClinicID].Visits; len(visits) != 1 || visits[0].ID != fixture.visitID {
-		t.Fatalf("new clinic visits = %#v", visits)
-	}
-}
-
 func TestPostgresDeltaSyncSnapshotLoaderBuildsEveryTargetIndex(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {

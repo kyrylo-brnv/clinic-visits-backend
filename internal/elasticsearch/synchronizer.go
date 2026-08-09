@@ -3,11 +3,9 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/smithautotest/clinic-visits/internal/database/sqlc"
@@ -21,31 +19,14 @@ type visitDocumentStore interface {
 	DeleteDocument(context.Context, string, string) error
 }
 
-type visitSyncSnapshotLoader interface {
-	Load(context.Context, string, visitRelationIDs) (visitSyncSnapshot, error)
-}
-
 type visitRelationIDs struct {
 	doctors  map[string]struct{}
 	patients map[string]struct{}
 	clinics  map[string]struct{}
 }
 
-type visitSyncSnapshot struct {
-	visit     *VisitDocument
-	doctors   map[string]DoctorDocument
-	patients  map[string]PatientDocument
-	clinics   map[string]ClinicDocument
-	relations visitRelationIDs
-}
-
-type postgresVisitSyncSnapshotLoader struct {
-	pool *pgxpool.Pool
-}
-
 type visitEventConsumer struct {
-	loader visitSyncSnapshotLoader
-	store  visitDocumentStore
+	synchronizer *deltaSynchronizer
 }
 
 // NewVisitEventConsumer returns an outbox consumer for visit create, update,
@@ -53,8 +34,10 @@ type visitEventConsumer struct {
 // rebuilt from the current PostgreSQL state.
 func NewVisitEventConsumer(pool *pgxpool.Pool, client *Client) outbox.Consumer {
 	consumer := &visitEventConsumer{
-		loader: &postgresVisitSyncSnapshotLoader{pool: pool},
-		store:  client,
+		synchronizer: &deltaSynchronizer{
+			loader: &postgresDeltaSyncSnapshotLoader{pool: pool},
+			store:  client,
+		},
 	}
 	return consumer.Consume
 }
@@ -76,34 +59,15 @@ func (c *visitEventConsumer) Consume(ctx context.Context, event outbox.Persisted
 	if err != nil {
 		return err
 	}
-	var indexedVisit VisitDocument
-	found, err := c.store.GetDocument(ctx, VisitsIndexName, event.AggregateID, &indexedVisit)
-	if err != nil {
-		return fmt.Errorf("load currently indexed visit %s: %w", event.AggregateID, err)
-	}
-	if found {
-		relations.addVisit(indexedVisit)
-	}
-
-	snapshot, err := c.loader.Load(ctx, event.AggregateID, relations)
-	if err != nil {
-		return fmt.Errorf("load PostgreSQL state for visit %s: %w", event.AggregateID, err)
-	}
-
-	if err := syncRelatedDocuments(ctx, c.store, snapshot); err != nil {
-		return fmt.Errorf("synchronize related documents for visit %s: %w", event.AggregateID, err)
-	}
-
-	// Keep the visit operation last. Until it succeeds, a retry can still use
-	// the previously indexed visit to discover relationships removed by an update.
-	if snapshot.visit == nil {
-		if err := c.store.DeleteDocument(ctx, VisitsIndexName, event.AggregateID); err != nil {
-			return fmt.Errorf("delete visit document %s: %w", event.AggregateID, err)
-		}
-		return nil
-	}
-	if err := c.store.UpsertDocument(ctx, VisitsIndexName, event.AggregateID, *snapshot.visit); err != nil {
-		return fmt.Errorf("upsert visit document %s: %w", event.AggregateID, err)
+	hints := newDeltaSyncHints()
+	hints.relations = relations
+	if err := c.synchronizer.syncWithHints(
+		ctx,
+		VisitsIndexName,
+		[]string{event.AggregateID},
+		hints,
+	); err != nil {
+		return fmt.Errorf("synchronize visit %s: %w", event.AggregateID, err)
 	}
 
 	return nil
@@ -134,95 +98,6 @@ func relationIDsFromEventPayload(payload []byte, aggregateID string) (visitRelat
 	return relations, nil
 }
 
-func (l *postgresVisitSyncSnapshotLoader) Load(
-	ctx context.Context,
-	visitID string,
-	relations visitRelationIDs,
-) (visitSyncSnapshot, error) {
-	transaction, err := l.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:   pgx.RepeatableRead,
-		AccessMode: pgx.ReadOnly,
-	})
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("begin read-only repeatable-read transaction: %w", err)
-	}
-	defer transaction.Rollback(ctx)
-
-	queries := sqlc.New(transaction)
-	parsedVisitID, err := uuid.Parse(visitID)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("parse visit ID: %w", err)
-	}
-
-	snapshot := visitSyncSnapshot{relations: relations}
-	visitRow, err := queries.GetVisitForElasticsearchSync(ctx, parsedVisitID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return visitSyncSnapshot{}, fmt.Errorf("get visit: %w", err)
-	}
-	if err == nil {
-		visit, err := mapSyncVisitDocument(visitRow)
-		if err != nil {
-			return visitSyncSnapshot{}, err
-		}
-		snapshot.visit = &visit
-		snapshot.relations.addVisit(visit)
-	}
-
-	doctorIDs, err := parseSortedUUIDs(snapshot.relations.doctors)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("parse related doctor IDs: %w", err)
-	}
-	patientIDs, err := parseSortedUUIDs(snapshot.relations.patients)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("parse related patient IDs: %w", err)
-	}
-	clinicIDs, err := parseSortedUUIDs(snapshot.relations.clinics)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("parse related clinic IDs: %w", err)
-	}
-
-	doctorRows, err := queries.ListDoctorsForElasticsearchSync(ctx, doctorIDs)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("list related doctors: %w", err)
-	}
-	patientRows, err := queries.ListPatientsForElasticsearchSync(ctx, patientIDs)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("list related patients: %w", err)
-	}
-	clinicRows, err := queries.ListClinicsForElasticsearchSync(ctx, clinicIDs)
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("list related clinics: %w", err)
-	}
-	visitRows, err := queries.ListVisitSummariesForElasticsearchSync(ctx, sqlc.ListVisitSummariesForElasticsearchSyncParams{
-		DoctorIds: doctorIDs, PatientIds: patientIDs, ClinicIds: clinicIDs,
-	})
-	if err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("list related visits: %w", err)
-	}
-
-	snapshot.doctors, err = mapSyncDoctorDocuments(doctorRows)
-	if err != nil {
-		return visitSyncSnapshot{}, err
-	}
-	snapshot.patients, err = mapSyncPatientDocuments(patientRows)
-	if err != nil {
-		return visitSyncSnapshot{}, err
-	}
-	snapshot.clinics, err = mapSyncClinicDocuments(clinicRows)
-	if err != nil {
-		return visitSyncSnapshot{}, err
-	}
-	if err := addSyncVisitSummaries(snapshot, visitRows); err != nil {
-		return visitSyncSnapshot{}, err
-	}
-
-	if err := transaction.Commit(ctx); err != nil {
-		return visitSyncSnapshot{}, fmt.Errorf("commit read-only repeatable-read transaction: %w", err)
-	}
-
-	return snapshot, nil
-}
-
 func newVisitRelationIDs() visitRelationIDs {
 	return visitRelationIDs{
 		doctors:  make(map[string]struct{}),
@@ -250,9 +125,16 @@ func parseSortedUUIDs(ids map[string]struct{}) ([]pgtype.UUID, error) {
 	return parsed, nil
 }
 
-func syncRelatedDocuments(ctx context.Context, store visitDocumentStore, snapshot visitSyncSnapshot) error {
-	for _, id := range sortedKeys(snapshot.relations.doctors) {
-		if document, ok := snapshot.doctors[id]; ok {
+func syncRelatedDocuments(
+	ctx context.Context,
+	store visitDocumentStore,
+	doctors map[string]DoctorDocument,
+	patients map[string]PatientDocument,
+	clinics map[string]ClinicDocument,
+	relations visitRelationIDs,
+) error {
+	for _, id := range sortedKeys(relations.doctors) {
+		if document, ok := doctors[id]; ok {
 			if err := store.UpsertDocument(ctx, DoctorsIndexName, id, document); err != nil {
 				return fmt.Errorf("upsert doctor %s: %w", id, err)
 			}
@@ -260,8 +142,8 @@ func syncRelatedDocuments(ctx context.Context, store visitDocumentStore, snapsho
 			return fmt.Errorf("delete doctor %s: %w", id, err)
 		}
 	}
-	for _, id := range sortedKeys(snapshot.relations.patients) {
-		if document, ok := snapshot.patients[id]; ok {
+	for _, id := range sortedKeys(relations.patients) {
+		if document, ok := patients[id]; ok {
 			if err := store.UpsertDocument(ctx, PatientsIndexName, id, document); err != nil {
 				return fmt.Errorf("upsert patient %s: %w", id, err)
 			}
@@ -269,8 +151,8 @@ func syncRelatedDocuments(ctx context.Context, store visitDocumentStore, snapsho
 			return fmt.Errorf("delete patient %s: %w", id, err)
 		}
 	}
-	for _, id := range sortedKeys(snapshot.relations.clinics) {
-		if document, ok := snapshot.clinics[id]; ok {
+	for _, id := range sortedKeys(relations.clinics) {
+		if document, ok := clinics[id]; ok {
 			if err := store.UpsertDocument(ctx, ClinicsIndexName, id, document); err != nil {
 				return fmt.Errorf("upsert clinic %s: %w", id, err)
 			}
@@ -352,7 +234,12 @@ func mapSyncClinicDocuments(rows []sqlc.ListClinicsForElasticsearchSyncRow) (map
 	return documents, nil
 }
 
-func addSyncVisitSummaries(snapshot visitSyncSnapshot, rows []sqlc.ListVisitSummariesForElasticsearchSyncRow) error {
+func addSyncVisitSummaries(
+	doctors map[string]DoctorDocument,
+	patients map[string]PatientDocument,
+	clinics map[string]ClinicDocument,
+	rows []sqlc.ListVisitSummariesForElasticsearchSyncRow,
+) error {
 	for _, row := range rows {
 		visitStartTime, err := requiredTimestamp("visit", row.ID, "visit_start_time", row.VisitStartTime)
 		if err != nil {
@@ -375,17 +262,17 @@ func addSyncVisitSummaries(snapshot visitSyncSnapshot, rows []sqlc.ListVisitSumm
 			Status: row.Status, VisitStartTime: visitStartTime, VisitEndTime: visitEndTime,
 			CreatedAt: createdAt, UpdatedAt: updatedAt,
 		}
-		if document, ok := snapshot.doctors[row.DoctorID]; ok {
+		if document, ok := doctors[row.DoctorID]; ok {
 			document.Visits = append(document.Visits, summary)
-			snapshot.doctors[row.DoctorID] = document
+			doctors[row.DoctorID] = document
 		}
-		if document, ok := snapshot.patients[row.PatientID]; ok {
+		if document, ok := patients[row.PatientID]; ok {
 			document.Visits = append(document.Visits, summary)
-			snapshot.patients[row.PatientID] = document
+			patients[row.PatientID] = document
 		}
-		if document, ok := snapshot.clinics[row.ClinicID]; ok {
+		if document, ok := clinics[row.ClinicID]; ok {
 			document.Visits = append(document.Visits, summary)
-			snapshot.clinics[row.ClinicID] = document
+			clinics[row.ClinicID] = document
 		}
 	}
 	return nil
