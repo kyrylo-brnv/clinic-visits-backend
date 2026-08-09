@@ -89,6 +89,19 @@ Elasticsearch health, deletes and recreates the four versioned indices
 and loads the current PostgreSQL state. Recreating the indices removes documents
 that no longer exist in PostgreSQL. The command exits nonzero if any step fails.
 
+To repair one read-model index without rebuilding the other three, run the
+explicit command with exactly one index name:
+
+```sh
+go run ./cmd/rebuild-index doctors-v1
+```
+
+Supported names are `doctors-v1`, `patients-v1`, `clinics-v1`, and `visits-v1`.
+The command recreates and reloads only the named index from the current
+PostgreSQL snapshot. Run it only while API writes and outbox processing are
+paused: an outbox update or delete processed during the rebuild can otherwise
+be overwritten by the older snapshot document.
+
 Normal API startup only checks Elasticsearch health and creates missing indices.
 While the API runs, a background worker continuously processes transactional
 visit outbox events in bounded batches, keeping visit documents and related

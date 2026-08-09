@@ -212,6 +212,49 @@ func TestUpsertBackfillDocumentsStopsWithContextOnFailure(t *testing.T) {
 	}
 }
 
+func TestUpsertBackfillDocumentsForIndexUsesOnlySelectedIndex(t *testing.T) {
+	t.Parallel()
+
+	documents := backfillDocuments{
+		doctors:  []DoctorDocument{{ID: "doctor-1"}},
+		patients: []PatientDocument{{ID: "patient-1"}},
+		clinics:  []ClinicDocument{{ID: "clinic-1"}},
+		visits:   []VisitDocument{{ID: "visit-1"}},
+	}
+
+	for _, testCase := range []struct {
+		indexName string
+		want      recordedDocumentUpsert
+	}{
+		{indexName: DoctorsIndexName, want: recordedDocumentUpsert{index: DoctorsIndexName, id: "doctor-1", document: documents.doctors[0]}},
+		{indexName: PatientsIndexName, want: recordedDocumentUpsert{index: PatientsIndexName, id: "patient-1", document: documents.patients[0]}},
+		{indexName: ClinicsIndexName, want: recordedDocumentUpsert{index: ClinicsIndexName, id: "clinic-1", document: documents.clinics[0]}},
+		{indexName: VisitsIndexName, want: recordedDocumentUpsert{index: VisitsIndexName, id: "visit-1", document: documents.visits[0]}},
+	} {
+		testCase := testCase
+		t.Run(testCase.indexName, func(t *testing.T) {
+			t.Parallel()
+
+			client := &recordingDocumentUpserter{}
+			if err := upsertBackfillDocumentsForIndex(t.Context(), client, testCase.indexName, documents); err != nil {
+				t.Fatalf("upsertBackfillDocumentsForIndex() error = %v", err)
+			}
+			if !reflect.DeepEqual(client.calls, []recordedDocumentUpsert{testCase.want}) {
+				t.Fatalf("upsert calls = %#v, want %#v", client.calls, []recordedDocumentUpsert{testCase.want})
+			}
+		})
+	}
+}
+
+func TestBackfillIndexRejectsUnsupportedIndexBeforeLoadingSnapshot(t *testing.T) {
+	t.Parallel()
+
+	err := BackfillIndex(t.Context(), nil, nil, "unknown-v1")
+	if err == nil || !strings.Contains(err.Error(), `unsupported Elasticsearch index "unknown-v1"`) {
+		t.Fatalf("BackfillIndex() error = %v", err)
+	}
+}
+
 type recordedDocumentUpsert struct {
 	index    string
 	id       string
