@@ -90,15 +90,27 @@ func SyncIndex(ctx context.Context, pool *pgxpool.Pool, client *Client, indexNam
 }
 
 func (s *deltaSynchronizer) Sync(ctx context.Context, indexName string, ids []string) error {
+	return s.syncWithHints(ctx, indexName, ids, newDeltaSyncHints())
+}
+
+func (s *deltaSynchronizer) syncWithHints(
+	ctx context.Context,
+	indexName string,
+	ids []string,
+	providedHints deltaSyncHints,
+) error {
 	targetIDs, err := ValidateSyncIndexRequest(indexName, ids)
 	if err != nil {
 		return err
 	}
 
-	hints, err := s.loadIndexedHints(ctx, indexName, targetIDs)
+	indexedHints, err := s.loadIndexedHints(ctx, indexName, targetIDs)
 	if err != nil {
 		return err
 	}
+	hints := newDeltaSyncHints()
+	mergeDeltaSyncHints(&hints, providedHints)
+	mergeDeltaSyncHints(&hints, indexedHints)
 	snapshot, err := s.loader.Load(ctx, indexName, targetIDs, hints)
 	if err != nil {
 		return fmt.Errorf("load PostgreSQL delta snapshot: %w", err)
@@ -261,9 +273,7 @@ func loadDeltaRelatedDocuments(ctx context.Context, queries *sqlc.Queries, snaps
 	if err != nil {
 		return err
 	}
-	if err := addSyncVisitSummaries(visitSyncSnapshot{
-		doctors: snapshot.doctors, patients: snapshot.patients, clinics: snapshot.clinics,
-	}, visitRows); err != nil {
+	if err := addSyncVisitSummaries(snapshot.doctors, snapshot.patients, snapshot.clinics, visitRows); err != nil {
 		return err
 	}
 	if snapshot.indexName != VisitsIndexName {
@@ -302,10 +312,14 @@ func loadDeltaVisitDocuments(
 }
 
 func syncDeltaRelatedDocuments(ctx context.Context, store visitDocumentStore, snapshot deltaSyncSnapshot) error {
-	return syncRelatedDocuments(ctx, store, visitSyncSnapshot{
-		doctors: snapshot.doctors, patients: snapshot.patients, clinics: snapshot.clinics,
-		relations: snapshot.relations,
-	})
+	return syncRelatedDocuments(
+		ctx,
+		store,
+		snapshot.doctors,
+		snapshot.patients,
+		snapshot.clinics,
+		snapshot.relations,
+	)
 }
 
 func syncDeltaVisitDocuments(ctx context.Context, store visitDocumentStore, snapshot deltaSyncSnapshot) error {
@@ -384,4 +398,19 @@ func cloneVisitRelationIDs(ids visitRelationIDs) visitRelationIDs {
 		cloned.clinics[id] = struct{}{}
 	}
 	return cloned
+}
+
+func mergeDeltaSyncHints(destination *deltaSyncHints, source deltaSyncHints) {
+	for id := range source.visits {
+		destination.visits[id] = struct{}{}
+	}
+	for id := range source.relations.doctors {
+		destination.relations.doctors[id] = struct{}{}
+	}
+	for id := range source.relations.patients {
+		destination.relations.patients[id] = struct{}{}
+	}
+	for id := range source.relations.clinics {
+		destination.relations.clinics[id] = struct{}{}
+	}
 }
