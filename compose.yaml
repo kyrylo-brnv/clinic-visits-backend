@@ -57,6 +57,7 @@ services:
         condition: service_healthy
 
   api:
+    image: clinic-visits-api:local
     build:
       context: .
       dockerfile: Dockerfile
@@ -71,6 +72,27 @@ services:
       ELASTICSEARCH_URL: http://elasticsearch:9200
     ports:
       - "8080:8080"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+
+  backfill:
+    profiles: ["tools"]
+    image: clinic-visits-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/clinic-visits-backfill"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-clinic}
+      DB_PASSWORD: ${DB_PASSWORD:-clinic}
+      DB_NAME: ${DB_NAME:-clinic_visits}
+      DB_SSLMODE: disable
+      ELASTICSEARCH_URL: http://elasticsearch:9200
     depends_on:
       migrations:
         condition: service_completed_successfully

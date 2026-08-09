@@ -1,16 +1,24 @@
 # Clinic Visits API
 
-## Run the complete local stack
+## Run the local stack
 
 Requires Docker Compose. No `.env` file is required for the included local
 defaults.
 
+For a first bootstrap, apply migrations and populate the persistent
+Elasticsearch indices before starting the API:
+
 ```sh
+docker compose run --build --rm backfill
 docker compose up --build
 ```
 
-This starts PostgreSQL, applies the SQL migrations once, starts Elasticsearch,
-and then starts the API. Wait for the API to report readiness, then use:
+For later starts, only `docker compose up --build` is needed. Normal API
+startup validates Elasticsearch and idempotently creates any missing mappings;
+it never performs a full backfill. The `backfill` service is an explicit tool
+profile and does not run during `docker compose up` or API restarts.
+
+Wait for the API to report readiness, then use:
 
 - Health: [http://localhost:8080/health](http://localhost:8080/health)
 - Swagger UI: [http://localhost:8080/docs](http://localhost:8080/docs)
@@ -34,16 +42,22 @@ local database configuration.
 
 ```sh
 cp .env.example .env
+```
+
+For the first bootstrap, start the dependencies and run the one-off backfill
+before starting the API:
+
+```sh
+docker compose up -d --wait postgres elasticsearch
+make backfill
 make dev
 ```
 
-`make dev` starts and waits for local PostgreSQL and the pinned single-node
-Elasticsearch service, applies migrations, and runs the Go API in the
-foreground. Wait for `Clinic Visits API is ready at
+On later starts, use `make dev` by itself. It starts and waits for local
+PostgreSQL and the pinned single-node Elasticsearch service, applies migrations,
+and runs the Go API in the foreground. Wait for `Clinic Visits API is ready at
 http://localhost:8080/health` before starting integration or Playwright tests.
-The API checks Elasticsearch health, idempotently initializes and backfills
-the `doctors-v1`, `visits-v1`, `patients-v1`, and `clinics-v1` indices from
-PostgreSQL. After initialization, verify an index with:
+After initialization, verify an index with:
 
 ```sh
 curl --head http://localhost:9200/doctors-v1
@@ -67,17 +81,29 @@ control.
 | `ELASTICSEARCH_URL` | Absolute HTTP or HTTPS Elasticsearch URL |
 | `HTTP_PORT` | API listen port |
 
-Run migrations as a one-off deployment job before starting the API. The API
-must start only after PostgreSQL migrations complete and Elasticsearch is
-available. During startup it checks Elasticsearch health, initializes and
-backfills the four versioned indices (`doctors-v1`, `visits-v1`,
-`patients-v1`, and `clinics-v1`) before accepting traffic. Use `GET /health`
-as the readiness endpoint.
+Run migrations as a one-off deployment job before starting either the API or a
+backfill. Run `clinic-visits-backfill` once for the first bootstrap, or
+explicitly during repair while API writes are paused. The command checks
+Elasticsearch health, deletes and recreates the four versioned indices
+(`doctors-v1`, `visits-v1`, `patients-v1`, and `clinics-v1`) with their mappings,
+and loads the current PostgreSQL state. Recreating the indices removes documents
+that no longer exist in PostgreSQL. The command exits nonzero if any step fails.
 
-Use persistent storage for both PostgreSQL and Elasticsearch. PostgreSQL is
-the source of truth for writes and durable data; Elasticsearch is a
-denormalized read model for search and v2 reads, and can be rebuilt from
-PostgreSQL when needed.
+Normal API startup only checks Elasticsearch health and creates missing indices.
+While the API runs, a background worker continuously processes transactional
+visit outbox events in bounded batches, keeping visit documents and related
+nested visit arrays current. Retryable database or Elasticsearch failures are
+logged and retried without stopping the API.
+
+Use persistent storage for both PostgreSQL and Elasticsearch. PostgreSQL is the
+source of truth for writes and durable data; Elasticsearch is a persistent,
+denormalized read model for search and v2 reads. Restarting the API does not
+repopulate it.
+
+`GET /health` and `HEAD /health` return HTTP 200 with application status `ok`
+once the HTTP server is accepting requests. The endpoint does not probe
+PostgreSQL or Elasticsearch; dependency availability is validated separately
+by migrations, API startup, and the Compose health checks.
 
 ## API documentation
 

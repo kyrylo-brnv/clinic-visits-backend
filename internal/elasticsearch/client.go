@@ -200,10 +200,63 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err := c.checkHealth(ctx); err != nil {
 		return fmt.Errorf("check elasticsearch health: %w", err)
 	}
+	return c.ensureIndices(ctx)
+}
+
+// RecreateIndices removes all documents from the versioned read-model indices
+// by deleting and recreating the indices with their configured mappings. It is
+// intended only for an explicit bootstrap or repair while API writes are
+// paused; normal API startup must use Initialize.
+func (c *Client) RecreateIndices(ctx context.Context) error {
+	if err := c.checkHealth(ctx); err != nil {
+		return fmt.Errorf("check elasticsearch health: %w", err)
+	}
+	for _, definition := range indexDefinitions {
+		if err := c.deleteIndex(ctx, definition.name); err != nil {
+			return fmt.Errorf("delete elasticsearch index %q: %w", definition.name, err)
+		}
+	}
+
+	return c.ensureIndices(ctx)
+}
+
+func (c *Client) ensureIndices(ctx context.Context) error {
 	for _, definition := range indexDefinitions {
 		if err := c.ensureIndex(ctx, definition); err != nil {
 			return fmt.Errorf("ensure elasticsearch index %q: %w", definition.name, err)
 		}
+	}
+
+	return nil
+}
+
+func (c *Client) deleteIndex(ctx context.Context, indexName string) error {
+	request, err := c.newRequest(ctx, http.MethodDelete, "/"+indexName, nil)
+	if err != nil {
+		return err
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("request index deletion: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return responseStatusError(response)
+	}
+
+	var result struct {
+		Acknowledged bool `json:"acknowledged"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode delete index response: %w", err)
+	}
+	if !result.Acknowledged {
+		return fmt.Errorf("index deletion was not acknowledged")
 	}
 
 	return nil

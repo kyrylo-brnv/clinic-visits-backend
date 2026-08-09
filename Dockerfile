@@ -5,12 +5,14 @@ WORKDIR /src
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/clinic-visits-api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/clinic-visits-backfill ./cmd/backfill
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 
 COPY --from=build --chown=nonroot:nonroot /out/clinic-visits-api /app/clinic-visits-api
+COPY --from=build --chown=nonroot:nonroot /out/clinic-visits-backfill /app/clinic-visits-backfill
 
 USER nonroot:nonroot
 
