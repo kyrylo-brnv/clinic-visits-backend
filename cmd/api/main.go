@@ -73,13 +73,13 @@ func main() {
 
 	processor := outbox.NewProcessor(
 		pool,
-		elasticsearch.NewVisitEventConsumer(pool, elasticsearchClient),
+		elasticsearch.NewOutboxEventConsumer(pool, elasticsearchClient),
 	)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
 		outbox.RunWorker(appContext, processor, func(err error) {
-			log.Printf("Error synchronizing visit outbox events; will retry: %v", err)
+			log.Printf("Error synchronizing outbox events; will retry: %v", err)
 		})
 	}()
 

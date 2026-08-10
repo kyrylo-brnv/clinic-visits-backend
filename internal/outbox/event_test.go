@@ -3,8 +3,29 @@ package outbox
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 )
+
+func TestAggregateEventVocabulary(t *testing.T) {
+	t.Parallel()
+
+	got := map[string][]string{
+		AggregateTypeVisit:   {EventTypeVisitCreated, EventTypeVisitUpdated, EventTypeVisitDeleted},
+		AggregateTypeDoctor:  {EventTypeDoctorCreated, EventTypeDoctorUpdated, EventTypeDoctorDeleted},
+		AggregateTypePatient: {EventTypePatientCreated, EventTypePatientUpdated, EventTypePatientDeleted},
+		AggregateTypeClinic:  {EventTypeClinicCreated, EventTypeClinicUpdated, EventTypeClinicDeleted},
+	}
+	want := map[string][]string{
+		"visit":   {"visit.created", "visit.updated", "visit.deleted"},
+		"doctor":  {"doctor.created", "doctor.updated", "doctor.deleted"},
+		"patient": {"patient.created", "patient.updated", "patient.deleted"},
+		"clinic":  {"clinic.created", "clinic.updated", "clinic.deleted"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("aggregate event vocabulary = %#v, want %#v", got, want)
+	}
+}
 
 func TestNewEventSerializesPayload(t *testing.T) {
 	t.Parallel()
