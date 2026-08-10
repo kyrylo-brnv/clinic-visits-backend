@@ -78,7 +78,7 @@ func (r *PostgresRepository) CreateVisit(
 		DoctorID:       row.DoctorID,
 		PatientID:      row.PatientID,
 		ClinicID:       row.ClinicID,
-		Status:         row.Status,
+		Status:         VisitStatus(row.Status),
 		VisitStartTime: row.VisitStartTime.Time,
 		VisitEndTime:   row.VisitEndTime.Time,
 		CreatedAt:      row.CreatedAt.Time,
@@ -120,7 +120,7 @@ func (r *PostgresRepository) ListVisits(
 			DoctorID:       row.DoctorID,
 			PatientID:      row.PatientID,
 			ClinicID:       row.ClinicID,
-			Status:         row.Status,
+			Status:         VisitStatus(row.Status),
 			VisitStartTime: row.VisitStartTime.Time,
 			VisitEndTime:   row.VisitEndTime.Time,
 			CreatedAt:      row.CreatedAt.Time,
@@ -222,11 +222,11 @@ func (r *PostgresRepository) UpdateVisit(
 			return Visit{}, fmt.Errorf("lock visit for status update: %w", err)
 		}
 
-		if !CanTransitionStatus(currentStatus, *request.Status) {
+		if !CanTransitionStatus(VisitStatus(currentStatus), *request.Status) {
 			return Visit{}, fmt.Errorf(
 				"%w: %s -> %s",
 				ErrInvalidStatusTransition,
-				currentStatus,
+				VisitStatus(currentStatus),
 				*request.Status,
 			)
 		}
@@ -282,7 +282,7 @@ func mapUpdateVisitRow(row sqlc.UpdateVisitRow) Visit {
 		DoctorID:       row.DoctorID,
 		PatientID:      row.PatientID,
 		ClinicID:       row.ClinicID,
-		Status:         row.Status,
+		Status:         VisitStatus(row.Status),
 		VisitStartTime: row.VisitStartTime.Time,
 		VisitEndTime:   row.VisitEndTime.Time,
 		CreatedAt:      row.CreatedAt.Time,
@@ -296,7 +296,7 @@ func mapDeleteVisitRow(row sqlc.DeleteVisitRow) Visit {
 		DoctorID:       row.DoctorID,
 		PatientID:      row.PatientID,
 		ClinicID:       row.ClinicID,
-		Status:         row.Status,
+		Status:         VisitStatus(row.Status),
 		VisitStartTime: row.VisitStartTime.Time,
 		VisitEndTime:   row.VisitEndTime.Time,
 		CreatedAt:      row.CreatedAt.Time,
@@ -325,12 +325,12 @@ func optionalTimestamp(value *time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: *value, Valid: true}
 }
 
-func optionalText(value *string) pgtype.Text {
+func optionalText(value *VisitStatus) pgtype.Text {
 	if value == nil {
 		return pgtype.Text{}
 	}
 
-	return pgtype.Text{String: *value, Valid: true}
+	return pgtype.Text{String: string(*value), Valid: true}
 }
 
 func mapCreateVisitError(err error) error {

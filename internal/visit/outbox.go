@@ -7,39 +7,39 @@ import (
 )
 
 type createdEventPayload struct {
-	ID             string    `json:"id"`
-	DoctorID       string    `json:"doctor_id"`
-	PatientID      string    `json:"patient_id"`
-	ClinicID       string    `json:"clinic_id"`
-	Status         string    `json:"status"`
-	VisitStartTime time.Time `json:"visit_start_time"`
-	VisitEndTime   time.Time `json:"visit_end_time"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string      `json:"id"`
+	DoctorID       string      `json:"doctor_id"`
+	PatientID      string      `json:"patient_id"`
+	ClinicID       string      `json:"clinic_id"`
+	Status         VisitStatus `json:"status"`
+	VisitStartTime time.Time   `json:"visit_start_time"`
+	VisitEndTime   time.Time   `json:"visit_end_time"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
 }
 
 type updatedEventPayload struct {
-	ID             string    `json:"id"`
-	DoctorID       string    `json:"doctor_id"`
-	PatientID      string    `json:"patient_id"`
-	ClinicID       string    `json:"clinic_id"`
-	Status         string    `json:"status"`
-	VisitStartTime time.Time `json:"visit_start_time"`
-	VisitEndTime   time.Time `json:"visit_end_time"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string      `json:"id"`
+	DoctorID       string      `json:"doctor_id"`
+	PatientID      string      `json:"patient_id"`
+	ClinicID       string      `json:"clinic_id"`
+	Status         VisitStatus `json:"status"`
+	VisitStartTime time.Time   `json:"visit_start_time"`
+	VisitEndTime   time.Time   `json:"visit_end_time"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
 }
 
 type deletedEventPayload struct {
-	ID             string    `json:"id"`
-	DoctorID       string    `json:"doctor_id"`
-	PatientID      string    `json:"patient_id"`
-	ClinicID       string    `json:"clinic_id"`
-	Status         string    `json:"status"`
-	VisitStartTime time.Time `json:"visit_start_time"`
-	VisitEndTime   time.Time `json:"visit_end_time"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string      `json:"id"`
+	DoctorID       string      `json:"doctor_id"`
+	PatientID      string      `json:"patient_id"`
+	ClinicID       string      `json:"clinic_id"`
+	Status         VisitStatus `json:"status"`
+	VisitStartTime time.Time   `json:"visit_start_time"`
+	VisitEndTime   time.Time   `json:"visit_end_time"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
 }
 
 func newCreatedEvent(visit Visit) (outbox.Event, error) {

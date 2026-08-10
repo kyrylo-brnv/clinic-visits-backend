@@ -23,13 +23,13 @@ type ListHandler struct {
 }
 
 type updateVisitBody struct {
-	VisitID        string                   `json:"visit_id"`
-	DoctorID       optionalField[string]    `json:"doctor_id"`
-	PatientID      optionalField[string]    `json:"patient_id"`
-	ClinicID       optionalField[string]    `json:"clinic_id"`
-	VisitStartTime optionalField[time.Time] `json:"visit_start_time"`
-	VisitEndTime   optionalField[time.Time] `json:"visit_end_time"`
-	Status         optionalField[string]    `json:"status"`
+	VisitID        string                     `json:"visit_id"`
+	DoctorID       optionalField[string]      `json:"doctor_id"`
+	PatientID      optionalField[string]      `json:"patient_id"`
+	ClinicID       optionalField[string]      `json:"clinic_id"`
+	VisitStartTime optionalField[time.Time]   `json:"visit_start_time"`
+	VisitEndTime   optionalField[time.Time]   `json:"visit_end_time"`
+	Status         optionalField[VisitStatus] `json:"status"`
 }
 
 type optionalField[T any] struct {

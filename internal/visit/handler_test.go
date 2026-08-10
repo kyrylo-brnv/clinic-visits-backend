@@ -579,8 +579,8 @@ func TestUpdateVisitReturnsUpdatedVisitAndPreservesOmittedFields(t *testing.T) {
 func TestUpdateVisitAcceptsSameStatusWithTimeChange(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []string{StatusScheduled, StatusInProgress, StatusClosed, StatusCanceled} {
-		t.Run(status, func(t *testing.T) {
+	for _, status := range []VisitStatus{StatusScheduled, StatusInProgress, StatusClosed, StatusCanceled} {
+		t.Run(string(status), func(t *testing.T) {
 			newEndTime := time.Date(2026, time.August, 5, 11, 0, 0, 0, time.UTC)
 			repo := &fakeRepository{updatedVisit: Visit{
 				ID:           "44444444-4444-4444-8444-444444444444",

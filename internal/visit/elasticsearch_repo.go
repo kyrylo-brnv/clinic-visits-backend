@@ -74,7 +74,7 @@ func (r *ElasticsearchRepository) listVisits(ctx context.Context, query any) ([]
 			DoctorID:       source.DoctorID,
 			PatientID:      source.PatientID,
 			ClinicID:       source.ClinicID,
-			Status:         source.Status,
+			Status:         VisitStatus(source.Status),
 			VisitStartTime: source.VisitStartTime,
 			VisitEndTime:   source.VisitEndTime,
 			CreatedAt:      source.CreatedAt,
