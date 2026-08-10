@@ -25,15 +25,14 @@ type visitRelationIDs struct {
 	clinics  map[string]struct{}
 }
 
-type visitEventConsumer struct {
+type outboxEventConsumer struct {
 	synchronizer *deltaSynchronizer
 }
 
-// NewVisitEventConsumer returns an outbox consumer for visit create, update,
-// and delete events. The event identifies the visit; document contents are
-// rebuilt from the current PostgreSQL state.
-func NewVisitEventConsumer(pool *pgxpool.Pool, client *Client) outbox.Consumer {
-	consumer := &visitEventConsumer{
+// NewOutboxEventConsumer returns a consumer that rebuilds affected
+// Elasticsearch documents from the current PostgreSQL state.
+func NewOutboxEventConsumer(pool *pgxpool.Pool, client *Client) outbox.Consumer {
+	consumer := &outboxEventConsumer{
 		synchronizer: &deltaSynchronizer{
 			loader: &postgresDeltaSyncSnapshotLoader{pool: pool},
 			store:  client,
@@ -42,35 +41,63 @@ func NewVisitEventConsumer(pool *pgxpool.Pool, client *Client) outbox.Consumer {
 	return consumer.Consume
 }
 
-func (c *visitEventConsumer) Consume(ctx context.Context, event outbox.PersistedEvent) error {
-	if event.AggregateType != outbox.AggregateTypeVisit {
-		return fmt.Errorf("unsupported outbox aggregate type %q", event.AggregateType)
-	}
-	switch event.EventType {
-	case outbox.EventTypeVisitCreated, outbox.EventTypeVisitUpdated, outbox.EventTypeVisitDeleted:
-	default:
-		return fmt.Errorf("unsupported visit outbox event type %q", event.EventType)
-	}
-	if _, err := uuid.Parse(event.AggregateID); err != nil {
-		return fmt.Errorf("parse visit outbox aggregate ID: %w", err)
-	}
-
-	relations, err := relationIDsFromEventPayload(event.Payload, event.AggregateID)
+func (c *outboxEventConsumer) Consume(ctx context.Context, event outbox.PersistedEvent) error {
+	indexName, err := outboxEventIndexName(event.AggregateType, event.EventType)
 	if err != nil {
 		return err
 	}
+	targetIDs, err := ValidateSyncIndexRequest(indexName, []string{event.AggregateID})
+	if err != nil {
+		return fmt.Errorf("validate %s outbox aggregate ID: %w", event.AggregateType, err)
+	}
+
 	hints := newDeltaSyncHints()
-	hints.relations = relations
+	if event.AggregateType == outbox.AggregateTypeVisit {
+		relations, err := relationIDsFromEventPayload(event.Payload, event.AggregateID)
+		if err != nil {
+			return err
+		}
+		hints.relations = relations
+	}
 	if err := c.synchronizer.syncWithHints(
 		ctx,
-		VisitsIndexName,
-		[]string{event.AggregateID},
+		indexName,
+		targetIDs,
 		hints,
 	); err != nil {
-		return fmt.Errorf("synchronize visit %s: %w", event.AggregateID, err)
+		return fmt.Errorf("synchronize %s %s: %w", event.AggregateType, event.AggregateID, err)
 	}
 
 	return nil
+}
+
+func outboxEventIndexName(aggregateType, eventType string) (string, error) {
+	switch aggregateType {
+	case outbox.AggregateTypeVisit:
+		switch eventType {
+		case outbox.EventTypeVisitCreated, outbox.EventTypeVisitUpdated, outbox.EventTypeVisitDeleted:
+			return VisitsIndexName, nil
+		}
+	case outbox.AggregateTypeDoctor:
+		switch eventType {
+		case outbox.EventTypeDoctorCreated, outbox.EventTypeDoctorUpdated, outbox.EventTypeDoctorDeleted:
+			return DoctorsIndexName, nil
+		}
+	case outbox.AggregateTypePatient:
+		switch eventType {
+		case outbox.EventTypePatientCreated, outbox.EventTypePatientUpdated, outbox.EventTypePatientDeleted:
+			return PatientsIndexName, nil
+		}
+	case outbox.AggregateTypeClinic:
+		switch eventType {
+		case outbox.EventTypeClinicCreated, outbox.EventTypeClinicUpdated, outbox.EventTypeClinicDeleted:
+			return ClinicsIndexName, nil
+		}
+	default:
+		return "", fmt.Errorf("unsupported outbox aggregate type %q", aggregateType)
+	}
+
+	return "", fmt.Errorf("unsupported %s outbox event type %q", aggregateType, eventType)
 }
 
 func relationIDsFromEventPayload(payload []byte, aggregateID string) (visitRelationIDs, error) {

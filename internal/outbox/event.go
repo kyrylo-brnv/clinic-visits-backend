@@ -6,10 +6,23 @@ import (
 )
 
 const (
-	AggregateTypeVisit    = "visit"
-	EventTypeVisitCreated = "visit.created"
-	EventTypeVisitUpdated = "visit.updated"
-	EventTypeVisitDeleted = "visit.deleted"
+	AggregateTypeVisit   = "visit"
+	AggregateTypeDoctor  = "doctor"
+	AggregateTypePatient = "patient"
+	AggregateTypeClinic  = "clinic"
+
+	EventTypeVisitCreated   = "visit.created"
+	EventTypeVisitUpdated   = "visit.updated"
+	EventTypeVisitDeleted   = "visit.deleted"
+	EventTypeDoctorCreated  = "doctor.created"
+	EventTypeDoctorUpdated  = "doctor.updated"
+	EventTypeDoctorDeleted  = "doctor.deleted"
+	EventTypePatientCreated = "patient.created"
+	EventTypePatientUpdated = "patient.updated"
+	EventTypePatientDeleted = "patient.deleted"
+	EventTypeClinicCreated  = "clinic.created"
+	EventTypeClinicUpdated  = "clinic.updated"
+	EventTypeClinicDeleted  = "clinic.deleted"
 )
 
 type Event struct {

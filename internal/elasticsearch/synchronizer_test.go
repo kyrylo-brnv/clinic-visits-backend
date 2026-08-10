@@ -22,7 +22,7 @@ const (
 	testNewClinicID  = "00000000-0000-4000-8000-000000000007"
 )
 
-func TestVisitEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *testing.T) {
+func TestOutboxEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *testing.T) {
 	t.Parallel()
 
 	indexedVisit := VisitDocument{
@@ -58,7 +58,7 @@ func TestVisitEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *test
 	}
 	loader := &recordingDeltaLoader{snapshot: snapshot}
 	store := &recordingVisitDocumentStore{indexedVisit: &indexedVisit}
-	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
+	consumer := &outboxEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
 
 	err := consumer.Consume(t.Context(), outbox.PersistedEvent{
 		AggregateType: outbox.AggregateTypeVisit,
@@ -92,7 +92,7 @@ func TestVisitEventConsumerSynchronizesCurrentVisitAndOldAndNewRelations(t *test
 	}
 }
 
-func TestVisitEventConsumerDeletesMissingVisitAfterRefreshingRelations(t *testing.T) {
+func TestOutboxEventConsumerDeletesMissingVisitAfterRefreshingRelations(t *testing.T) {
 	t.Parallel()
 
 	deletedVisit := VisitDocument{
@@ -113,7 +113,7 @@ func TestVisitEventConsumerDeletesMissingVisitAfterRefreshingRelations(t *testin
 	}
 	loader := &recordingDeltaLoader{snapshot: snapshot}
 	store := &recordingVisitDocumentStore{}
-	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
+	consumer := &outboxEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
 
 	if err := consumer.Consume(t.Context(), outbox.PersistedEvent{
 		AggregateType: outbox.AggregateTypeVisit,
@@ -152,7 +152,7 @@ func TestMapSyncPatientDocumentsPreservesNullDeletionStatus(t *testing.T) {
 	}
 }
 
-func TestVisitEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T) {
+func TestOutboxEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T) {
 	t.Parallel()
 
 	indexedVisit := VisitDocument{
@@ -171,7 +171,7 @@ func TestVisitEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T)
 	}
 	failure := errors.New("Elasticsearch unavailable")
 	store := &recordingVisitDocumentStore{indexedVisit: &indexedVisit, failAtWrite: 1, err: failure}
-	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{
+	consumer := &outboxEventConsumer{synchronizer: &deltaSynchronizer{
 		loader: &recordingDeltaLoader{snapshot: snapshot}, store: store,
 	}}
 
@@ -191,7 +191,7 @@ func TestVisitEventConsumerFailureIsReturnedBeforeVisitReplacement(t *testing.T)
 	}
 }
 
-func TestVisitEventConsumerCanRetryAfterVisitWriteFailure(t *testing.T) {
+func TestOutboxEventConsumerCanRetryAfterVisitWriteFailure(t *testing.T) {
 	t.Parallel()
 
 	currentVisit := VisitDocument{
@@ -212,7 +212,7 @@ func TestVisitEventConsumerCanRetryAfterVisitWriteFailure(t *testing.T) {
 	}
 	failure := errors.New("visit index unavailable")
 	store := &recordingVisitDocumentStore{failAtWrite: 4, err: failure}
-	consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{
+	consumer := &outboxEventConsumer{synchronizer: &deltaSynchronizer{
 		loader: &recordingDeltaLoader{snapshot: snapshot}, store: store,
 	}}
 	event := outbox.PersistedEvent{
@@ -237,25 +237,115 @@ func TestVisitEventConsumerCanRetryAfterVisitWriteFailure(t *testing.T) {
 	}
 }
 
-func TestVisitEventConsumerRejectsUnsupportedEventsBeforeSynchronization(t *testing.T) {
+func TestOutboxEventConsumerSynchronizesEntityEventsToMappedIndices(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		aggregateType string
+		aggregateID   string
+		eventTypes    []string
+		indexName     string
+		document      any
+	}{
+		{
+			aggregateType: outbox.AggregateTypeDoctor,
+			aggregateID:   testOldDoctorID,
+			eventTypes: []string{
+				outbox.EventTypeDoctorCreated,
+				outbox.EventTypeDoctorUpdated,
+				outbox.EventTypeDoctorDeleted,
+			},
+			indexName: DoctorsIndexName,
+			document:  DoctorDocument{ID: testOldDoctorID},
+		},
+		{
+			aggregateType: outbox.AggregateTypePatient,
+			aggregateID:   testOldPatientID,
+			eventTypes: []string{
+				outbox.EventTypePatientCreated,
+				outbox.EventTypePatientUpdated,
+				outbox.EventTypePatientDeleted,
+			},
+			indexName: PatientsIndexName,
+			document:  PatientDocument{ID: testOldPatientID},
+		},
+		{
+			aggregateType: outbox.AggregateTypeClinic,
+			aggregateID:   testOldClinicID,
+			eventTypes: []string{
+				outbox.EventTypeClinicCreated,
+				outbox.EventTypeClinicUpdated,
+				outbox.EventTypeClinicDeleted,
+			},
+			indexName: ClinicsIndexName,
+			document:  ClinicDocument{ID: testOldClinicID},
+		},
+	}
+	for _, testCase := range tests {
+		for _, eventType := range testCase.eventTypes {
+			t.Run(eventType, func(t *testing.T) {
+				snapshot := newDeltaSyncSnapshot(testCase.indexName, []string{testCase.aggregateID})
+				addDeltaEntityTargets(&snapshot, testCase.indexName)
+				switch document := testCase.document.(type) {
+				case DoctorDocument:
+					snapshot.doctors[testCase.aggregateID] = document
+				case PatientDocument:
+					snapshot.patients[testCase.aggregateID] = document
+				case ClinicDocument:
+					snapshot.clinics[testCase.aggregateID] = document
+				}
+
+				loader := &recordingDeltaLoader{snapshot: snapshot}
+				store := &recordingDeltaStore{}
+				consumer := &outboxEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
+				event := outbox.PersistedEvent{
+					AggregateType: testCase.aggregateType,
+					AggregateID:   testCase.aggregateID,
+					EventType:     eventType,
+					Payload:       []byte("{"),
+				}
+
+				if err := consumer.Consume(t.Context(), event); err != nil {
+					t.Fatalf("Consume() error = %v", err)
+				}
+				if loader.calls != 1 || loader.index != testCase.indexName || !reflect.DeepEqual(loader.ids, []string{testCase.aggregateID}) {
+					t.Fatalf("targeted sync load = calls:%d index:%q IDs:%q", loader.calls, loader.index, loader.ids)
+				}
+				wantCalls := []documentStoreCall{{
+					operation: "upsert", index: testCase.indexName, id: testCase.aggregateID, document: testCase.document,
+				}}
+				if !reflect.DeepEqual(store.calls, wantCalls) {
+					t.Fatalf("document calls = %#v, want %#v", store.calls, wantCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestOutboxEventConsumerRejectsInvalidEventsBeforeSynchronization(t *testing.T) {
 	t.Parallel()
 
 	tests := []outbox.PersistedEvent{
-		{AggregateType: "patient", AggregateID: testVisitID, EventType: outbox.EventTypeVisitCreated},
+		{AggregateType: "specialty", AggregateID: testVisitID, EventType: outbox.EventTypeVisitCreated},
+		{AggregateType: outbox.AggregateTypeVisit, AggregateID: testVisitID, EventType: outbox.EventTypeDoctorCreated},
+		{AggregateType: outbox.AggregateTypeDoctor, AggregateID: testOldDoctorID, EventType: outbox.EventTypePatientCreated},
+		{AggregateType: outbox.AggregateTypePatient, AggregateID: testOldPatientID, EventType: outbox.EventTypeClinicUpdated},
+		{AggregateType: outbox.AggregateTypeClinic, AggregateID: testOldClinicID, EventType: outbox.EventTypeDoctorDeleted},
 		{AggregateType: outbox.AggregateTypeVisit, AggregateID: testVisitID, EventType: "visit.unknown"},
-		{AggregateType: outbox.AggregateTypeVisit, AggregateID: "not-a-uuid", EventType: outbox.EventTypeVisitCreated},
+		{AggregateType: outbox.AggregateTypeDoctor, AggregateID: "not-a-uuid", EventType: outbox.EventTypeDoctorCreated},
+		{AggregateType: outbox.AggregateTypePatient, AggregateID: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", EventType: outbox.EventTypePatientCreated},
 		{AggregateType: outbox.AggregateTypeVisit, AggregateID: testVisitID, EventType: outbox.EventTypeVisitCreated, Payload: []byte("{")},
 	}
 	for _, event := range tests {
 		loader := &recordingDeltaLoader{}
-		store := &recordingVisitDocumentStore{}
-		consumer := &visitEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
+		store := &recordingDeltaStore{}
+		consumer := &outboxEventConsumer{synchronizer: &deltaSynchronizer{loader: loader, store: store}}
 
 		if err := consumer.Consume(t.Context(), event); err == nil {
 			t.Fatalf("Consume(%+v) error = nil, want rejection", event)
 		}
-		if loader.calls != 0 || store.getCalls != 0 || len(store.calls) != 0 {
-			t.Fatalf("unsupported event performed synchronization: loader=%d gets=%d calls=%d", loader.calls, store.getCalls, len(store.calls))
+		if loader.calls != 0 || len(store.gets) != 0 || len(store.calls) != 0 {
+			t.Fatalf("invalid event performed synchronization: loader=%d gets=%d calls=%d", loader.calls, len(store.gets), len(store.calls))
 		}
 	}
 }
