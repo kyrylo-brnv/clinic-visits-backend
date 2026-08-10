@@ -16,8 +16,8 @@ const validCreateVisitBody = `{
 	"doctor_id": "11111111-1111-4111-8111-111111111111",
 	"patient_id": "22222222-2222-4222-8222-222222222222",
 	"clinic_id": "33333333-3333-4333-8333-333333333333",
-	"visit_start_time": "2026-08-05T09:00:00Z",
-	"visit_end_time": "2026-08-05T10:00:00Z"
+	"visit_start_time": "2099-08-05T09:00:00Z",
+	"visit_end_time": "2099-08-05T10:00:00Z"
 }`
 
 const validDeleteVisitBody = `{
@@ -147,7 +147,7 @@ func TestCreateVisitRejectsInvalidRequest(t *testing.T) {
 		{name: "unknown field", body: `{"unknown": true}`},
 		{name: "multiple objects", body: validCreateVisitBody + `{}`},
 		{name: "invalid UUID", body: strings.Replace(validCreateVisitBody, "11111111-1111-4111-8111-111111111111", "invalid", 1)},
-		{name: "invalid time range", body: strings.Replace(validCreateVisitBody, "2026-08-05T10:00:00Z", "2026-08-05T08:00:00Z", 1)},
+		{name: "invalid time range", body: strings.Replace(validCreateVisitBody, "2099-08-05T10:00:00Z", "2099-08-05T08:00:00Z", 1)},
 	}
 
 	for _, test := range tests {
@@ -176,6 +176,44 @@ func TestCreateVisitRejectsInvalidRequest(t *testing.T) {
 				t.Fatal("expected repository not to be called")
 			}
 		})
+	}
+}
+
+func TestCreateVisitRejectsPastStartTimeBeforeRepositoryConflicts(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepository{err: ErrVisitTimeConflict}
+	handler := NewHandler(repo)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/visits/create",
+		strings.NewReader(`{
+			"doctor_id":"11111111-1111-4111-8111-111111111111",
+			"patient_id":"22222222-2222-4222-8222-222222222222",
+			"clinic_id":"33333333-3333-4333-8333-333333333333",
+			"visit_start_time":"2000-01-01T09:00:00Z",
+			"visit_end_time":"2000-01-01T10:00:00Z"
+		}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.CreateVisit(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+	}
+	var body struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != "BAD_REQUEST" || body.Message != ErrVisitStartTimeInPast.Error() {
+		t.Fatalf("unexpected response body: %#v", body)
+	}
+	if repo.called {
+		t.Fatal("expected past start time to be rejected before repository conflict checks")
 	}
 }
 

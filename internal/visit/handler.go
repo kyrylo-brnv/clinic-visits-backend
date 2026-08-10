@@ -103,6 +103,10 @@ func (h Handler) CreateVisit(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSONError(w, r, http.StatusBadRequest, ErrInvalidTimeRange.Error())
 		return
 	}
+	if request.VisitStartTime.Before(time.Now()) {
+		httpapi.WriteJSONError(w, r, http.StatusBadRequest, ErrVisitStartTimeInPast.Error())
+		return
+	}
 
 	createdVisit, err := h.repo.CreateVisit(r.Context(), request)
 	if err != nil {
