@@ -7,14 +7,16 @@ import (
 	"github.com/smithautotest/clinic-visits/internal/apitime"
 )
 
+type VisitStatus string
+
 const (
-	StatusScheduled  = "SCHEDULED"
-	StatusInProgress = "IN_PROGRESS"
-	StatusClosed     = "CLOSED"
-	StatusCanceled   = "CANCELED"
+	StatusScheduled  VisitStatus = "SCHEDULED"
+	StatusInProgress VisitStatus = "IN_PROGRESS"
+	StatusClosed     VisitStatus = "CLOSED"
+	StatusCanceled   VisitStatus = "CANCELED"
 )
 
-func IsValidStatus(status string) bool {
+func IsValidStatus(status VisitStatus) bool {
 	switch status {
 	case StatusScheduled, StatusInProgress, StatusClosed, StatusCanceled:
 		return true
@@ -23,7 +25,7 @@ func IsValidStatus(status string) bool {
 	}
 }
 
-func CanTransitionStatus(currentStatus, nextStatus string) bool {
+func CanTransitionStatus(currentStatus, nextStatus VisitStatus) bool {
 	if !IsValidStatus(currentStatus) || !IsValidStatus(nextStatus) {
 		return false
 	}
@@ -43,27 +45,27 @@ func CanTransitionStatus(currentStatus, nextStatus string) bool {
 }
 
 type Visit struct {
-	ID             string    `json:"id"`
-	DoctorID       string    `json:"doctor_id"`
-	PatientID      string    `json:"patient_id"`
-	ClinicID       string    `json:"clinic_id"`
-	Status         string    `json:"status"`
-	VisitStartTime time.Time `json:"visit_start_time"`
-	VisitEndTime   time.Time `json:"visit_end_time"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string      `json:"id"`
+	DoctorID       string      `json:"doctor_id"`
+	PatientID      string      `json:"patient_id"`
+	ClinicID       string      `json:"clinic_id"`
+	Status         VisitStatus `json:"status"`
+	VisitStartTime time.Time   `json:"visit_start_time"`
+	VisitEndTime   time.Time   `json:"visit_end_time"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
 }
 
 type VisitResponse struct {
-	ID             string `json:"id"`
-	DoctorID       string `json:"doctor_id"`
-	PatientID      string `json:"patient_id"`
-	ClinicID       string `json:"clinic_id"`
-	Status         string `json:"status"`
-	VisitStartTime string `json:"visit_start_time"`
-	VisitEndTime   string `json:"visit_end_time"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID             string      `json:"id"`
+	DoctorID       string      `json:"doctor_id"`
+	PatientID      string      `json:"patient_id"`
+	ClinicID       string      `json:"clinic_id"`
+	Status         VisitStatus `json:"status"`
+	VisitStartTime string      `json:"visit_start_time"`
+	VisitEndTime   string      `json:"visit_end_time"`
+	CreatedAt      string      `json:"created_at"`
+	UpdatedAt      string      `json:"updated_at"`
 }
 
 func newVisitResponse(visit Visit) VisitResponse {

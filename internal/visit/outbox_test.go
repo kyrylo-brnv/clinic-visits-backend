@@ -47,15 +47,15 @@ func TestVisitMutationEventsSerializeVisitSnapshot(t *testing.T) {
 			}
 
 			var payload struct {
-				ID             string    `json:"id"`
-				DoctorID       string    `json:"doctor_id"`
-				PatientID      string    `json:"patient_id"`
-				ClinicID       string    `json:"clinic_id"`
-				Status         string    `json:"status"`
-				VisitStartTime time.Time `json:"visit_start_time"`
-				VisitEndTime   time.Time `json:"visit_end_time"`
-				CreatedAt      time.Time `json:"created_at"`
-				UpdatedAt      time.Time `json:"updated_at"`
+				ID             string      `json:"id"`
+				DoctorID       string      `json:"doctor_id"`
+				PatientID      string      `json:"patient_id"`
+				ClinicID       string      `json:"clinic_id"`
+				Status         VisitStatus `json:"status"`
+				VisitStartTime time.Time   `json:"visit_start_time"`
+				VisitEndTime   time.Time   `json:"visit_end_time"`
+				CreatedAt      time.Time   `json:"created_at"`
+				UpdatedAt      time.Time   `json:"updated_at"`
 			}
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				t.Fatalf("decode payload: %v", err)

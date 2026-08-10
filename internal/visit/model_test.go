@@ -9,7 +9,7 @@ import (
 func TestIsValidStatus(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []string{
+	for _, status := range []VisitStatus{
 		StatusScheduled,
 		StatusInProgress,
 		StatusClosed,
@@ -20,7 +20,7 @@ func TestIsValidStatus(t *testing.T) {
 		}
 	}
 
-	for _, status := range []string{"", "CLOSED ", "cancelled", "UNKNOWN"} {
+	for _, status := range []VisitStatus{"", "CLOSED ", "cancelled", "UNKNOWN"} {
 		if IsValidStatus(status) {
 			t.Errorf("expected status %q to be invalid", status)
 		}
@@ -32,8 +32,8 @@ func TestCanTransitionStatus(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		current string
-		next    string
+		current VisitStatus
+		next    VisitStatus
 		allowed bool
 	}{
 		{name: "scheduled to in progress", current: StatusScheduled, next: StatusInProgress, allowed: true},

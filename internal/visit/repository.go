@@ -41,13 +41,13 @@ type DeleteVisitRequest struct {
 }
 
 type UpdateVisitRequest struct {
-	VisitID        string     `json:"visit_id"`
-	DoctorID       *string    `json:"doctor_id"`
-	PatientID      *string    `json:"patient_id"`
-	ClinicID       *string    `json:"clinic_id"`
-	VisitStartTime *time.Time `json:"visit_start_time"`
-	VisitEndTime   *time.Time `json:"visit_end_time"`
-	Status         *string    `json:"status"`
+	VisitID        string       `json:"visit_id"`
+	DoctorID       *string      `json:"doctor_id"`
+	PatientID      *string      `json:"patient_id"`
+	ClinicID       *string      `json:"clinic_id"`
+	VisitStartTime *time.Time   `json:"visit_start_time"`
+	VisitEndTime   *time.Time   `json:"visit_end_time"`
+	Status         *VisitStatus `json:"status"`
 }
 
 func (r UpdateVisitRequest) HasChanges() bool {
