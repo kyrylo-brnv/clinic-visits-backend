@@ -16,6 +16,7 @@ var (
 	ErrVisitTimeConflict       = errors.New("doctor already has a visit during this time")
 	ErrPatientTimeConflict     = errors.New("patient already has a visit during this time")
 	ErrDoctorClinicMismatch    = errors.New("doctor does not belong to clinic")
+	ErrVisitStartTimeInPast    = errors.New("visit start time cannot be in the past")
 	ErrInvalidTimeRange        = errors.New("visit end time must be after start time")
 	ErrInvalidStatusTransition = errors.New("invalid visit status transition")
 )

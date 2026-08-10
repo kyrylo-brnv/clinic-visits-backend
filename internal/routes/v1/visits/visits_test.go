@@ -64,8 +64,8 @@ func TestRegisterCreateVisit(t *testing.T) {
 			"doctor_id": "11111111-1111-4111-8111-111111111111",
 			"patient_id": "22222222-2222-4222-8222-222222222222",
 			"clinic_id": "33333333-3333-4333-8333-333333333333",
-			"visit_start_time": "2026-08-05T09:00:00Z",
-			"visit_end_time": "2026-08-05T10:00:00Z"
+			"visit_start_time": "2099-08-05T09:00:00Z",
+			"visit_end_time": "2099-08-05T10:00:00Z"
 		}`),
 	)
 	response := httptest.NewRecorder()
