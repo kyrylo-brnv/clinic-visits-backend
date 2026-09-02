@@ -25,6 +25,7 @@ func TestProcessBatchDeliversAndMarksEventsInOrder(t *testing.T) {
 		rows: []sqlc.OutboxEvent{
 			{
 				ID:            firstID,
+				EventSequence: 7,
 				AggregateType: "visit",
 				AggregateID:   firstID,
 				EventType:     "first",
@@ -40,6 +41,7 @@ func TestProcessBatchDeliversAndMarksEventsInOrder(t *testing.T) {
 		},
 		func(_ context.Context, event PersistedEvent) error {
 			if event.EventType == "first" && (event.ID != firstID.String() ||
+				event.Sequence != 7 ||
 				event.AggregateType != "visit" ||
 				event.AggregateID != firstID.String() ||
 				string(event.Payload) != `{"visit_id":"first"}` ||

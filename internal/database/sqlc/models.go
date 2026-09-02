@@ -34,6 +34,7 @@ type OutboxEvent struct {
 	Payload       []byte
 	CreatedAt     pgtype.Timestamptz
 	ProcessedAt   pgtype.Timestamptz
+	EventSequence int64
 }
 
 type Patient struct {

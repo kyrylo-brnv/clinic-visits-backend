@@ -37,6 +37,9 @@ func TestDoctorMutationsCreateAtomicOutboxEvents(t *testing.T) {
 		if _, err := pool.Exec(context.Background(), "DELETE FROM clinics WHERE id = $1", clinicID); err != nil {
 			t.Errorf("delete clinic fixture: %v", err)
 		}
+		if _, err := pool.Exec(context.Background(), "DELETE FROM outbox_events WHERE aggregate_id = $1", clinicID); err != nil {
+			t.Errorf("delete clinic fixture outbox events: %v", err)
+		}
 	})
 
 	var committedDoctorID, rolledBackDoctorID string
