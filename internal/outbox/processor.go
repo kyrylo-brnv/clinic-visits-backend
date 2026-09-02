@@ -18,6 +18,7 @@ var (
 
 type PersistedEvent struct {
 	ID            string
+	Sequence      int64
 	AggregateType string
 	AggregateID   string
 	EventType     string
@@ -121,6 +122,7 @@ func (p *Processor) ProcessBatch(ctx context.Context, batchSize int32) (int, err
 func mapPersistedEvent(row sqlc.OutboxEvent) PersistedEvent {
 	return PersistedEvent{
 		ID:            row.ID.String(),
+		Sequence:      row.EventSequence,
 		AggregateType: row.AggregateType,
 		AggregateID:   row.AggregateID.String(),
 		EventType:     row.EventType,

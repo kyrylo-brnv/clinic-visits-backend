@@ -45,18 +45,27 @@ func (q *Queries) CreateOutboxEvent(ctx context.Context, arg CreateOutboxEventPa
 
 const listPendingOutboxEventsForUpdate = `-- name: ListPendingOutboxEventsForUpdate :many
 SELECT
-    id,
-    aggregate_type,
-    aggregate_id,
-    event_type,
-    payload,
-    created_at,
-    processed_at
-FROM outbox_events
-WHERE processed_at IS NULL
-ORDER BY created_at, id
+    candidate.id,
+    candidate.aggregate_type,
+    candidate.aggregate_id,
+    candidate.event_type,
+    candidate.payload,
+    candidate.created_at,
+    candidate.processed_at,
+    candidate.event_sequence
+FROM outbox_events AS candidate
+WHERE candidate.processed_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM outbox_events AS earlier
+      WHERE earlier.aggregate_type = candidate.aggregate_type
+        AND earlier.aggregate_id = candidate.aggregate_id
+        AND earlier.processed_at IS NULL
+        AND earlier.event_sequence < candidate.event_sequence
+  )
+ORDER BY candidate.event_sequence
 LIMIT $1::int
-FOR UPDATE SKIP LOCKED
+FOR UPDATE OF candidate SKIP LOCKED
 `
 
 func (q *Queries) ListPendingOutboxEventsForUpdate(ctx context.Context, batchSize int32) ([]OutboxEvent, error) {
@@ -76,6 +85,7 @@ func (q *Queries) ListPendingOutboxEventsForUpdate(ctx context.Context, batchSiz
 			&i.Payload,
 			&i.CreatedAt,
 			&i.ProcessedAt,
+			&i.EventSequence,
 		); err != nil {
 			return nil, err
 		}
