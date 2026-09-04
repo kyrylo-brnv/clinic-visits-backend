@@ -24,6 +24,16 @@ Wait for the API to report readiness, then use:
 - Swagger UI: [http://localhost:8080/docs](http://localhost:8080/docs)
 - OpenAPI JSON: [http://localhost:8080/openapi.json](http://localhost:8080/openapi.json)
 
+To exercise the visit lifecycle locally, install `curl` and `jq`, start the
+API, and run:
+
+```sh
+./scripts/demo-visits.sh
+```
+
+Set `BASE_URL` to use a different API address, for example
+`BASE_URL=http://localhost:9090 ./scripts/demo-visits.sh`.
+
 Press `Ctrl-C` to stop the foreground stack. To remove the stopped containers
 while preserving database and Elasticsearch data, run:
 
