@@ -2,7 +2,9 @@ package elasticsearch
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,30 +31,56 @@ type documentUpserter interface {
 	UpsertDocument(context.Context, string, string, any) error
 }
 
-// Backfill loads one consistent PostgreSQL snapshot and indexes every current
-// doctor, patient, clinic, and visit document in Elasticsearch.
-func Backfill(ctx context.Context, pool *pgxpool.Pool, client *Client) error {
-	rows, err := loadBackfillRows(ctx, pool)
-	if err != nil {
-		return fmt.Errorf("load PostgreSQL backfill snapshot: %w", err)
-	}
+const (
+	DefaultBackfillBatchSize   = 100
+	DefaultBackfillConcurrency = 4
+	MaxBackfillBatchSize       = 1000
+	MaxBackfillConcurrency     = 32
+)
 
-	documents, err := buildBackfillDocuments(rows)
-	if err != nil {
-		return fmt.Errorf("build Elasticsearch backfill documents: %w", err)
-	}
+var (
+	ErrInvalidBackfillBatchSize   = errors.New("backfill batch size must be between 1 and 1000")
+	ErrInvalidBackfillConcurrency = errors.New("backfill concurrency must be between 1 and 32")
+)
 
-	if err := upsertBackfillDocuments(ctx, client, documents); err != nil {
-		return fmt.Errorf("upsert Elasticsearch backfill documents: %w", err)
-	}
+type BackfillOptions struct {
+	BatchSize   int
+	Concurrency int
+}
 
+func DefaultBackfillOptions() BackfillOptions {
+	return BackfillOptions{
+		BatchSize:   DefaultBackfillBatchSize,
+		Concurrency: DefaultBackfillConcurrency,
+	}
+}
+
+func ValidateBackfillOptions(options BackfillOptions) error {
+	if options.BatchSize <= 0 || options.BatchSize > MaxBackfillBatchSize {
+		return ErrInvalidBackfillBatchSize
+	}
+	if options.Concurrency <= 0 || options.Concurrency > MaxBackfillConcurrency {
+		return ErrInvalidBackfillConcurrency
+	}
 	return nil
 }
 
-// BackfillIndex loads one consistent PostgreSQL snapshot, builds the existing
-// enriched read models, and upserts documents only into indexName.
-func BackfillIndex(ctx context.Context, pool *pgxpool.Pool, client *Client, indexName string) error {
-	if err := ValidateIndexName(indexName); err != nil {
+// Backfill loads one consistent PostgreSQL snapshot and indexes every current
+// doctor, patient, clinic, and visit document in Elasticsearch.
+func Backfill(ctx context.Context, pool *pgxpool.Pool, client *Client) error {
+	return BackfillWithOptions(ctx, pool, client, DefaultBackfillOptions())
+}
+
+// BackfillWithOptions runs a full backfill with a bounded channel-backed
+// worker pool. BatchSize bounds each queued unit of work and Concurrency bounds
+// both goroutines and in-flight batches.
+func BackfillWithOptions(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	client *Client,
+	options BackfillOptions,
+) error {
+	if err := ValidateBackfillOptions(options); err != nil {
 		return err
 	}
 
@@ -66,7 +94,44 @@ func BackfillIndex(ctx context.Context, pool *pgxpool.Pool, client *Client, inde
 		return fmt.Errorf("build Elasticsearch backfill documents: %w", err)
 	}
 
-	if err := upsertBackfillDocumentsForIndex(ctx, client, indexName, documents); err != nil {
+	if err := upsertBackfillDocumentsWithOptions(ctx, client, documents, options); err != nil {
+		return fmt.Errorf("upsert Elasticsearch backfill documents: %w", err)
+	}
+
+	return nil
+}
+
+// BackfillIndex loads one consistent PostgreSQL snapshot, builds the existing
+// enriched read models, and upserts documents only into indexName.
+func BackfillIndex(ctx context.Context, pool *pgxpool.Pool, client *Client, indexName string) error {
+	return BackfillIndexWithOptions(ctx, pool, client, indexName, DefaultBackfillOptions())
+}
+
+func BackfillIndexWithOptions(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	client *Client,
+	indexName string,
+	options BackfillOptions,
+) error {
+	if err := ValidateIndexName(indexName); err != nil {
+		return err
+	}
+	if err := ValidateBackfillOptions(options); err != nil {
+		return err
+	}
+
+	rows, err := loadBackfillRows(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("load PostgreSQL backfill snapshot: %w", err)
+	}
+
+	documents, err := buildBackfillDocuments(rows)
+	if err != nil {
+		return fmt.Errorf("build Elasticsearch backfill documents: %w", err)
+	}
+
+	if err := upsertBackfillDocumentsForIndexWithOptions(ctx, client, indexName, documents, options); err != nil {
 		return fmt.Errorf("upsert Elasticsearch backfill documents: %w", err)
 	}
 
@@ -283,8 +348,20 @@ func buildBackfillDocuments(rows backfillRows) (backfillDocuments, error) {
 }
 
 func upsertBackfillDocuments(ctx context.Context, client documentUpserter, documents backfillDocuments) error {
+	return upsertBackfillDocumentsWithOptions(ctx, client, documents, DefaultBackfillOptions())
+}
+
+func upsertBackfillDocumentsWithOptions(
+	ctx context.Context,
+	client documentUpserter,
+	documents backfillDocuments,
+	options BackfillOptions,
+) error {
+	if err := ValidateBackfillOptions(options); err != nil {
+		return err
+	}
 	for _, indexName := range []string{DoctorsIndexName, PatientsIndexName, ClinicsIndexName, VisitsIndexName} {
-		if err := upsertBackfillDocumentsForIndex(ctx, client, indexName, documents); err != nil {
+		if err := upsertBackfillDocumentsForIndexWithOptions(ctx, client, indexName, documents, options); err != nil {
 			return err
 		}
 	}
@@ -293,25 +370,99 @@ func upsertBackfillDocuments(ctx context.Context, client documentUpserter, docum
 }
 
 func upsertBackfillDocumentsForIndex(ctx context.Context, client documentUpserter, indexName string, documents backfillDocuments) error {
+	return upsertBackfillDocumentsForIndexWithOptions(ctx, client, indexName, documents, DefaultBackfillOptions())
+}
+
+func upsertBackfillDocumentsForIndexWithOptions(
+	ctx context.Context,
+	client documentUpserter,
+	indexName string,
+	documents backfillDocuments,
+	options BackfillOptions,
+) error {
+	if err := ValidateBackfillOptions(options); err != nil {
+		return err
+	}
 	switch indexName {
 	case DoctorsIndexName:
-		return upsertDocuments(ctx, client, indexName, "doctor", documents.doctors, func(document DoctorDocument) string { return document.ID })
+		return upsertDocuments(ctx, client, indexName, "doctor", documents.doctors, func(document DoctorDocument) string { return document.ID }, options)
 	case PatientsIndexName:
-		return upsertDocuments(ctx, client, indexName, "patient", documents.patients, func(document PatientDocument) string { return document.ID })
+		return upsertDocuments(ctx, client, indexName, "patient", documents.patients, func(document PatientDocument) string { return document.ID }, options)
 	case ClinicsIndexName:
-		return upsertDocuments(ctx, client, indexName, "clinic", documents.clinics, func(document ClinicDocument) string { return document.ID })
+		return upsertDocuments(ctx, client, indexName, "clinic", documents.clinics, func(document ClinicDocument) string { return document.ID }, options)
 	case VisitsIndexName:
-		return upsertDocuments(ctx, client, indexName, "visit", documents.visits, func(document VisitDocument) string { return document.ID })
+		return upsertDocuments(ctx, client, indexName, "visit", documents.visits, func(document VisitDocument) string { return document.ID }, options)
 	default:
 		return ValidateIndexName(indexName)
 	}
 }
 
-func upsertDocuments[T any](ctx context.Context, client documentUpserter, indexName, entityName string, documents []T, id func(T) string) error {
-	for _, document := range documents {
-		documentID := id(document)
-		if err := client.UpsertDocument(ctx, indexName, documentID, document); err != nil {
-			return fmt.Errorf("upsert %s %s: %w", entityName, documentID, err)
+type backfillBatch[T any] struct {
+	position  int
+	documents []T
+}
+
+type backfillBatchResult struct {
+	position int
+	err      error
+}
+
+func upsertDocuments[T any](
+	ctx context.Context,
+	client documentUpserter,
+	indexName string,
+	entityName string,
+	documents []T,
+	id func(T) string,
+	options BackfillOptions,
+) error {
+	jobs := make(chan backfillBatch[T], options.Concurrency)
+	results := make(chan backfillBatchResult, options.Concurrency)
+	var workers sync.WaitGroup
+	workers.Add(options.Concurrency)
+	for range options.Concurrency {
+		go func() {
+			defer workers.Done()
+			for batch := range jobs {
+				var batchErr error
+				for _, document := range batch.documents {
+					documentID := id(document)
+					if err := client.UpsertDocument(ctx, indexName, documentID, document); err != nil {
+						batchErr = fmt.Errorf("upsert %s %s: %w", entityName, documentID, err)
+						break
+					}
+				}
+				results <- backfillBatchResult{position: batch.position, err: batchErr}
+			}
+		}()
+	}
+	defer func() {
+		close(jobs)
+		workers.Wait()
+	}()
+
+	batchPosition := 0
+	for start := 0; start < len(documents); {
+		dispatched := 0
+		for dispatched < options.Concurrency && start < len(documents) {
+			end := min(start+options.BatchSize, len(documents))
+			select {
+			case jobs <- backfillBatch[T]{position: batchPosition, documents: documents[start:end]}:
+				start = end
+				batchPosition++
+				dispatched++
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		batchResults := make([]error, dispatched)
+		for range dispatched {
+			result := <-results
+			batchResults[result.position-(batchPosition-dispatched)] = result.err
+		}
+		if err := errors.Join(batchResults...); err != nil {
+			return err
 		}
 	}
 

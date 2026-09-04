@@ -9,7 +9,7 @@ For a first bootstrap, apply migrations and populate the persistent
 Elasticsearch indices before starting the API:
 
 ```sh
-docker compose run --build --rm backfill
+docker compose run --build --rm backfill -batch-size=100 -concurrency=4
 docker compose up --build
 ```
 
@@ -86,8 +86,10 @@ backfill. Run `clinic-visits-backfill` once for the first bootstrap, or
 explicitly during repair while API writes are paused. The command checks
 Elasticsearch health, deletes and recreates the four versioned indices
 (`doctors-v1`, `visits-v1`, `patients-v1`, and `clinics-v1`) with their mappings,
-and loads the current PostgreSQL state. Recreating the indices removes documents
-that no longer exist in PostgreSQL. The command exits nonzero if any step fails.
+and loads the current PostgreSQL state with a bounded worker pool. Use
+`-batch-size` (1–1000, default 100) and `-concurrency` (1–32, default 4) to tune
+that pool. Recreating the indices removes documents that no longer exist in
+PostgreSQL. The command exits nonzero if any step fails.
 
 To repair one read-model index without rebuilding the other three, run the
 explicit command with exactly one index name:
@@ -103,10 +105,12 @@ paused: an outbox update or delete processed during the rebuild can otherwise
 be overwritten by the older snapshot document.
 
 Normal API startup only checks Elasticsearch health and creates missing indices.
-While the API runs, a background worker continuously processes transactional
-visit outbox events in bounded batches, keeping visit documents and related
-nested visit arrays current. Retryable database or Elasticsearch failures are
-logged and retried without stopping the API.
+While the API runs, a background producer continuously selects transactional
+outbox events in bounded batches and deterministically shards them across four
+workers. Events for one aggregate stay ordered, while independent aggregates
+can synchronize concurrently. Successful events are acknowledged in PostgreSQL;
+retryable database or Elasticsearch failures remain pending and are retried
+without stopping the API.
 
 Use persistent storage for both PostgreSQL and Elasticsearch. PostgreSQL is the
 source of truth for writes and durable data; Elasticsearch is a persistent,

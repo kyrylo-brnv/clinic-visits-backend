@@ -7,6 +7,8 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestProcessorIntegrationOrdersLimitsAndMarksSuccessfulEvents(t *testing.T) {
+func TestProcessorIntegrationLimitsAndMarksSuccessfulEvents(t *testing.T) {
 	pool := openOutboxTestPool(t)
 	baseTime := time.Date(1000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	baseSequence := outboxIntegrationSequenceBase(t, pool)
@@ -25,7 +27,10 @@ func TestProcessorIntegrationOrdersLimitsAndMarksSuccessfulEvents(t *testing.T) 
 	cleanupOutboxTestEvents(t, pool, firstID, secondID, thirdID)
 
 	delivered := make([]string, 0, 2)
+	var deliveredMu sync.Mutex
 	processor := NewProcessor(pool, func(_ context.Context, event PersistedEvent) error {
+		deliveredMu.Lock()
+		defer deliveredMu.Unlock()
 		delivered = append(delivered, event.ID)
 		return nil
 	})
@@ -37,8 +42,11 @@ func TestProcessorIntegrationOrdersLimitsAndMarksSuccessfulEvents(t *testing.T) 
 	if processed != 2 {
 		t.Fatalf("expected 2 processed events, got %d", processed)
 	}
-	if expected := []string{firstID.String(), secondID.String()}; !reflect.DeepEqual(delivered, expected) {
-		t.Fatalf("expected delivery order %v, got %v", expected, delivered)
+	sort.Strings(delivered)
+	expected := []string{firstID.String(), secondID.String()}
+	sort.Strings(expected)
+	if !reflect.DeepEqual(delivered, expected) {
+		t.Fatalf("expected deliveries %v, got %v", expected, delivered)
 	}
 
 	assertOutboxProcessed(t, pool, firstID, true)

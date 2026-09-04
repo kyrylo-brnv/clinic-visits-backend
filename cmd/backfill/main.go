@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -18,7 +21,12 @@ import (
 const backfillTimeout = 30 * time.Minute
 
 func main() {
-	err := godotenv.Load()
+	backfillOptions, err := parseBackfillOptions(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = godotenv.Load()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Fatal("Error loading environment variables:", err)
 	}
@@ -52,9 +60,27 @@ func main() {
 	if err := elasticsearchClient.RecreateIndices(ctx); err != nil {
 		log.Fatal("Error recreating Elasticsearch indices:", err)
 	}
-	if err := elasticsearch.Backfill(ctx, pool, elasticsearchClient); err != nil {
+	if err := elasticsearch.BackfillWithOptions(ctx, pool, elasticsearchClient, backfillOptions); err != nil {
 		log.Fatal("Error backfilling Elasticsearch:", err)
 	}
 
 	log.Print("Elasticsearch backfill completed")
+}
+
+func parseBackfillOptions(arguments []string) (elasticsearch.BackfillOptions, error) {
+	options := elasticsearch.DefaultBackfillOptions()
+	flags := flag.NewFlagSet("backfill", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.IntVar(&options.BatchSize, "batch-size", options.BatchSize, "documents per worker batch")
+	flags.IntVar(&options.Concurrency, "concurrency", options.Concurrency, "number of backfill workers")
+	if err := flags.Parse(arguments); err != nil {
+		return elasticsearch.BackfillOptions{}, fmt.Errorf("parse backfill options: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return elasticsearch.BackfillOptions{}, fmt.Errorf("unexpected backfill argument %q", flags.Arg(0))
+	}
+	if err := elasticsearch.ValidateBackfillOptions(options); err != nil {
+		return elasticsearch.BackfillOptions{}, err
+	}
+	return options, nil
 }
