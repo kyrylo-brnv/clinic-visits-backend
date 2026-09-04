@@ -5,6 +5,8 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -255,6 +257,140 @@ func TestBackfillIndexRejectsUnsupportedIndexBeforeLoadingSnapshot(t *testing.T)
 	}
 }
 
+func TestValidateBackfillOptionsRejectsOutOfRangeValues(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name    string
+		options BackfillOptions
+		want    error
+	}{
+		{name: "zero batch", options: BackfillOptions{BatchSize: 0, Concurrency: 1}, want: ErrInvalidBackfillBatchSize},
+		{name: "large batch", options: BackfillOptions{BatchSize: MaxBackfillBatchSize + 1, Concurrency: 1}, want: ErrInvalidBackfillBatchSize},
+		{name: "zero concurrency", options: BackfillOptions{BatchSize: 1, Concurrency: 0}, want: ErrInvalidBackfillConcurrency},
+		{name: "large concurrency", options: BackfillOptions{BatchSize: 1, Concurrency: MaxBackfillConcurrency + 1}, want: ErrInvalidBackfillConcurrency},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateBackfillOptions(testCase.options); !errors.Is(err, testCase.want) {
+				t.Fatalf("ValidateBackfillOptions() error = %v, want %v", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestUpsertDocumentsUsesBoundedConcurrentWorkerPool(t *testing.T) {
+	t.Parallel()
+
+	client := newBlockingDocumentUpserter()
+	documents := []DoctorDocument{
+		{ID: "doctor-1"}, {ID: "doctor-2"}, {ID: "doctor-3"},
+		{ID: "doctor-4"}, {ID: "doctor-5"}, {ID: "doctor-6"},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- upsertDocuments(
+			context.Background(),
+			client,
+			DoctorsIndexName,
+			"doctor",
+			documents,
+			func(document DoctorDocument) string { return document.ID },
+			BackfillOptions{BatchSize: 1, Concurrency: 3},
+		)
+	}()
+
+	for range 3 {
+		select {
+		case <-client.started:
+		case <-time.After(time.Second):
+			client.releaseAll()
+			t.Fatal("configured backfill workers did not start concurrently")
+		}
+	}
+	select {
+	case <-client.started:
+		client.releaseAll()
+		t.Fatal("more than the configured three upserts started")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := client.maximum.Load(); got != 3 {
+		client.releaseAll()
+		t.Fatalf("maximum concurrent upserts = %d, want 3", got)
+	}
+	client.releaseAll()
+	if err := <-done; err != nil {
+		t.Fatalf("upsertDocuments() error = %v", err)
+	}
+}
+
+func TestUpsertDocumentsReportsConcurrentFailuresInDocumentOrder(t *testing.T) {
+	t.Parallel()
+
+	client := &perDocumentErrorUpserter{errors: map[string]error{
+		"doctor-1": errors.New("first failure"),
+		"doctor-2": errors.New("second failure"),
+	}}
+	err := upsertDocuments(
+		t.Context(),
+		client,
+		DoctorsIndexName,
+		"doctor",
+		[]DoctorDocument{{ID: "doctor-1"}, {ID: "doctor-2"}},
+		func(document DoctorDocument) string { return document.ID },
+		BackfillOptions{BatchSize: 1, Concurrency: 2},
+	)
+	if err == nil {
+		t.Fatal("upsertDocuments() error = nil, want concurrent failures")
+	}
+	firstPosition := strings.Index(err.Error(), "upsert doctor doctor-1")
+	secondPosition := strings.Index(err.Error(), "upsert doctor doctor-2")
+	if firstPosition < 0 || secondPosition < 0 || firstPosition >= secondPosition {
+		t.Fatalf("upsertDocuments() error = %q, want failures in document order", err)
+	}
+}
+
+func TestUpsertDocumentsCancelsWorkers(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{}, 1)
+	client := documentUpserterFunc(func(ctx context.Context, _, _ string, _ any) error {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- upsertDocuments(
+			ctx,
+			client,
+			DoctorsIndexName,
+			"doctor",
+			[]DoctorDocument{{ID: "doctor-1"}, {ID: "doctor-2"}},
+			func(document DoctorDocument) string { return document.ID },
+			BackfillOptions{BatchSize: 1, Concurrency: 2},
+		)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("backfill worker did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("upsertDocuments() error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("backfill workers did not stop after cancellation")
+	}
+}
+
 type recordedDocumentUpsert struct {
 	index    string
 	id       string
@@ -265,6 +401,53 @@ type recordingDocumentUpserter struct {
 	calls      []recordedDocumentUpsert
 	failAtCall int
 	err        error
+}
+
+type blockingDocumentUpserter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	active  atomic.Int32
+	maximum atomic.Int32
+}
+
+func newBlockingDocumentUpserter() *blockingDocumentUpserter {
+	return &blockingDocumentUpserter{
+		started: make(chan struct{}, MaxBackfillConcurrency),
+		release: make(chan struct{}),
+	}
+}
+
+func (c *blockingDocumentUpserter) UpsertDocument(context.Context, string, string, any) error {
+	current := c.active.Add(1)
+	for {
+		observed := c.maximum.Load()
+		if current <= observed || c.maximum.CompareAndSwap(observed, current) {
+			break
+		}
+	}
+	c.started <- struct{}{}
+	<-c.release
+	c.active.Add(-1)
+	return nil
+}
+
+func (c *blockingDocumentUpserter) releaseAll() {
+	c.once.Do(func() { close(c.release) })
+}
+
+type perDocumentErrorUpserter struct {
+	errors map[string]error
+}
+
+func (c *perDocumentErrorUpserter) UpsertDocument(_ context.Context, _, id string, _ any) error {
+	return c.errors[id]
+}
+
+type documentUpserterFunc func(context.Context, string, string, any) error
+
+func (f documentUpserterFunc) UpsertDocument(ctx context.Context, index, id string, document any) error {
+	return f(ctx, index, id, document)
 }
 
 func (c *recordingDocumentUpserter) UpsertDocument(_ context.Context, index, id string, document any) error {
