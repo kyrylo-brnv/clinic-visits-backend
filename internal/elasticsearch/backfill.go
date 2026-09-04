@@ -297,15 +297,16 @@ func buildBackfillDocuments(rows backfillRows) (backfillDocuments, error) {
 		}
 
 		summary := VisitSummary{
-			ID:             row.ID,
-			DoctorID:       row.DoctorID,
-			PatientID:      row.PatientID,
-			ClinicID:       row.ClinicID,
-			Status:         row.Status,
-			VisitStartTime: visitStartTime,
-			VisitEndTime:   visitEndTime,
-			CreatedAt:      createdAt,
-			UpdatedAt:      updatedAt,
+			ID:              row.ID,
+			DoctorID:        row.DoctorID,
+			PatientID:       row.PatientID,
+			PatientFullName: row.PatientFirstName + " " + row.PatientLastName,
+			ClinicID:        row.ClinicID,
+			Status:          row.Status,
+			VisitStartTime:  visitStartTime,
+			VisitEndTime:    visitEndTime,
+			CreatedAt:       createdAt,
+			UpdatedAt:       updatedAt,
 		}
 		documents.doctors[doctorPosition].Visits = append(documents.doctors[doctorPosition].Visits, summary)
 		documents.patients[patientPosition].Visits = append(documents.patients[patientPosition].Visits, summary)

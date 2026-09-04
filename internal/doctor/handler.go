@@ -19,6 +19,15 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (h Handler) SearchDoctors(w http.ResponseWriter, r *http.Request) {
+	h.searchDoctors(w, r, false)
+}
+
+// SearchDoctorsV2 returns Elasticsearch doctor results with their nested visits.
+func (h Handler) SearchDoctorsV2(w http.ResponseWriter, r *http.Request) {
+	h.searchDoctors(w, r, true)
+}
+
+func (h Handler) searchDoctors(w http.ResponseWriter, r *http.Request, includeVisits bool) {
 	if !httpapi.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -59,9 +68,14 @@ func (h Handler) SearchDoctors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{
-		"data": doctors,
-	})
+	if includeVisits {
+		httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{
+			"data": newDoctorV2Responses(doctors),
+		})
+		return
+	}
+
+	httpapi.WriteJSONResponse(w, r, http.StatusOK, map[string]any{"data": newDoctorV1Responses(doctors)})
 }
 func hasInvalidUUIDFilter(filter *DoctorFilter) bool {
 	if filter == nil {

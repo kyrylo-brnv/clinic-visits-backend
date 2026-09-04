@@ -102,6 +102,58 @@ func TestOpenAPISpecGroupsVersionedOperationsByVersionThenResource(t *testing.T)
 	}
 }
 
+func TestOpenAPISpecDistinguishesV1AndV2DoctorResponses(t *testing.T) {
+	var document struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Ref string `json:"$ref"`
+			} `json:"responses"`
+		} `json:"paths"`
+		Components struct {
+			Schemas map[string]struct {
+				Required   []string                   `json:"required"`
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(openAPISpec, &document); err != nil {
+		t.Fatalf("openapi.json is not valid JSON: %v", err)
+	}
+
+	if got := document.Paths["/v1/doctors/search"]["post"].Responses["200"].Ref; got != "#/components/responses/DoctorSearchV1Success" {
+		t.Fatalf("v1 doctor search response = %q", got)
+	}
+	if got := document.Paths["/v2/doctors/search"]["post"].Responses["200"].Ref; got != "#/components/responses/DoctorSearchV2Success" {
+		t.Fatalf("v2 doctor search response = %q", got)
+	}
+
+	if _, ok := document.Components.Schemas["Doctor"].Properties["visits"]; ok {
+		t.Fatal("v1 Doctor schema unexpectedly contains visits")
+	}
+	v2Doctor := document.Components.Schemas["DoctorV2"]
+	if _, ok := v2Doctor.Properties["visits"]; !ok {
+		t.Fatal("DoctorV2 schema is missing visits")
+	}
+	if !containsString(v2Doctor.Required, "visits") {
+		t.Fatalf("DoctorV2 required fields = %v, want visits", v2Doctor.Required)
+	}
+	visitSummary := document.Components.Schemas["DoctorVisitSummary"]
+	for _, field := range []string{"patient_id", "patient_full_name", "visit_start_time"} {
+		if _, ok := visitSummary.Properties[field]; !ok {
+			t.Errorf("DoctorVisitSummary is missing %s", field)
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestOpenAPISpecHasNoDanglingLocalReferences(t *testing.T) {
 	var document any
 	if err := json.Unmarshal(openAPISpec, &document); err != nil {

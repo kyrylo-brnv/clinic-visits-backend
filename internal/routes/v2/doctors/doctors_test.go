@@ -7,27 +7,43 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smithautotest/clinic-visits/internal/doctor"
 )
 
 type fakeRepository struct {
 	request doctor.DoctorSearchRequest
+	doctors []doctor.Doctor
 }
 
 func (r *fakeRepository) FindDoctors(_ context.Context, request doctor.DoctorSearchRequest) ([]doctor.Doctor, error) {
 	r.request = request
-	return []doctor.Doctor{{
+	return r.doctors, nil
+}
+
+func testDoctorWithVisit() doctor.Doctor {
+	zone := time.FixedZone("EEST", 3*60*60)
+	createdAt := time.Date(2026, time.August, 5, 14, 30, 45, 123456789, zone)
+	return doctor.Doctor{
 		ID:          "doctor-1",
 		SpecialtyID: "specialty-1",
 		ClinicID:    "clinic-1",
 		FullName:    "Jane Doe",
-	}}, nil
+		Visits: []doctor.VisitSummary{{
+			ID: "visit-1", DoctorID: "doctor-1", PatientID: "patient-1", PatientFullName: "Ada Lovelace",
+			ClinicID: "clinic-1", Status: "SCHEDULED",
+			VisitStartTime: createdAt.Add(24 * time.Hour),
+			VisitEndTime:   createdAt.Add(25 * time.Hour),
+			CreatedAt:      createdAt,
+			UpdatedAt:      createdAt.Add(time.Hour),
+		}},
+	}
 }
 
 func TestRegisterDoctorsSearch(t *testing.T) {
 	mux := http.NewServeMux()
-	repository := &fakeRepository{}
+	repository := &fakeRepository{doctors: []doctor.Doctor{testDoctorWithVisit()}}
 	Register(mux, doctor.NewHandler(repository))
 
 	request := httptest.NewRequest(
@@ -45,7 +61,25 @@ func TestRegisterDoctorsSearch(t *testing.T) {
 		t.Fatalf("FindDoctors() filter = %#v", repository.request.Filter)
 	}
 
-	wantBody := `{"data":[{"id":"doctor-1","specialty_id":"specialty-1","clinic_id":"clinic-1","full_name":"Jane Doe"}]}`
+	wantBody := `{"data":[{"id":"doctor-1","specialty_id":"specialty-1","clinic_id":"clinic-1","full_name":"Jane Doe","visits":[{"id":"visit-1","doctor_id":"doctor-1","patient_id":"patient-1","patient_full_name":"Ada Lovelace","clinic_id":"clinic-1","status":"SCHEDULED","visit_start_time":"2026-08-06T14:30:45.123456+03:00","visit_end_time":"2026-08-06T15:30:45.123456+03:00","created_at":"2026-08-05T14:30:45.123456+03:00","updated_at":"2026-08-05T15:30:45.123456+03:00"}]}]}`
+	if response.Body.String() != wantBody {
+		t.Fatalf("POST /v2/doctors/search body = %s, want %s", response.Body.String(), wantBody)
+	}
+}
+
+func TestRegisterDoctorsSearchIncludesEmptyVisits(t *testing.T) {
+	mux := http.NewServeMux()
+	Register(mux, doctor.NewHandler(&fakeRepository{doctors: []doctor.Doctor{{
+		ID: "doctor-1", SpecialtyID: "specialty-1", ClinicID: "clinic-1", FullName: "Jane Doe",
+	}}}))
+
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v2/doctors/search", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST /v2/doctors/search status = %d, want %d", response.Code, http.StatusOK)
+	}
+	wantBody := `{"data":[{"id":"doctor-1","specialty_id":"specialty-1","clinic_id":"clinic-1","full_name":"Jane Doe","visits":[]}]}`
 	if response.Body.String() != wantBody {
 		t.Fatalf("POST /v2/doctors/search body = %s, want %s", response.Body.String(), wantBody)
 	}

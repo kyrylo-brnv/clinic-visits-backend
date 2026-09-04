@@ -34,11 +34,28 @@ func (r *ElasticsearchRepository) FindDoctors(ctx context.Context, request Docto
 			return nil, fmt.Errorf("decode doctor search result %d from Elasticsearch: %w", documentIndex, err)
 		}
 
+		visits := make([]VisitSummary, 0, len(source.Visits))
+		for _, visit := range source.Visits {
+			visits = append(visits, VisitSummary{
+				ID:              visit.ID,
+				DoctorID:        visit.DoctorID,
+				PatientID:       visit.PatientID,
+				PatientFullName: visit.PatientFullName,
+				ClinicID:        visit.ClinicID,
+				Status:          visit.Status,
+				VisitStartTime:  visit.VisitStartTime,
+				VisitEndTime:    visit.VisitEndTime,
+				CreatedAt:       visit.CreatedAt,
+				UpdatedAt:       visit.UpdatedAt,
+			})
+		}
+
 		doctors = append(doctors, Doctor{
 			ID:          source.ID,
 			SpecialtyID: source.SpecialtyID,
 			ClinicID:    source.ClinicID,
 			FullName:    source.FullName,
+			Visits:      visits,
 		})
 	}
 

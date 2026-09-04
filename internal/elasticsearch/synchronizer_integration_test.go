@@ -58,6 +58,14 @@ func TestPostgresDeltaSyncSnapshotLoaderBuildsEveryTargetIndex(t *testing.T) {
 				if !ok || len(document.Visits) != 1 || document.Visits[0].ID != fixture.visitID {
 					t.Fatalf("patient document = %#v", document)
 				}
+				doctor, ok := snapshot.doctors[fixture.newDoctorID]
+				if !ok || len(doctor.Visits) != 1 || doctor.Visits[0].PatientFullName != "NewSync Patient" {
+					t.Fatalf("affected doctor document = %#v", doctor)
+				}
+				clinic, ok := snapshot.clinics[fixture.newClinicID]
+				if !ok || len(clinic.Visits) != 1 || clinic.Visits[0].PatientFullName != "NewSync Patient" {
+					t.Fatalf("affected clinic document = %#v", clinic)
+				}
 			},
 		},
 		{

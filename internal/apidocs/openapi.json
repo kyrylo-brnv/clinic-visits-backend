@@ -79,7 +79,7 @@
         "operationId": "searchDoctorsV1",
         "requestBody": { "$ref": "#/components/requestBodies/DoctorSearch" },
         "responses": {
-          "200": { "$ref": "#/components/responses/DoctorSearchSuccess" },
+          "200": { "$ref": "#/components/responses/DoctorSearchV1Success" },
           "400": { "$ref": "#/components/responses/SearchValidationError" },
           "500": { "$ref": "#/components/responses/InternalServerError" }
         }
@@ -92,7 +92,7 @@
         "operationId": "searchDoctorsV2",
         "requestBody": { "$ref": "#/components/requestBodies/DoctorSearch" },
         "responses": {
-          "200": { "$ref": "#/components/responses/DoctorSearchSuccess" },
+          "200": { "$ref": "#/components/responses/DoctorSearchV2Success" },
           "400": { "$ref": "#/components/responses/SearchValidationError" },
           "500": { "$ref": "#/components/responses/InternalServerError" }
         }
@@ -258,11 +258,19 @@
           }
         }
       },
-      "DoctorSearchSuccess": {
+      "DoctorSearchV1Success": {
         "description": "Matching doctors.",
         "content": {
           "application/json": {
             "schema": { "$ref": "#/components/schemas/DoctorListResponse" }
+          }
+        }
+      },
+      "DoctorSearchV2Success": {
+        "description": "Matching doctors with related visit details from Elasticsearch.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/DoctorV2ListResponse" }
           }
         }
       },
@@ -512,6 +520,49 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/Doctor" }
           }
+        }
+      },
+      "DoctorV2": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "specialty_id", "clinic_id", "full_name", "visits"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "specialty_id": { "type": "string", "format": "uuid" },
+          "clinic_id": { "type": "string", "format": "uuid" },
+          "full_name": { "type": "string" },
+          "visits": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DoctorVisitSummary" }
+          }
+        }
+      },
+      "DoctorV2ListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DoctorV2" }
+          }
+        }
+      },
+      "DoctorVisitSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "doctor_id", "patient_id", "patient_full_name", "clinic_id", "status", "visit_start_time", "visit_end_time", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "doctor_id": { "type": "string", "format": "uuid" },
+          "patient_id": { "type": "string", "format": "uuid" },
+          "patient_full_name": { "type": "string" },
+          "clinic_id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/VisitStatus" },
+          "visit_start_time": { "$ref": "#/components/schemas/APITimestamp" },
+          "visit_end_time": { "$ref": "#/components/schemas/APITimestamp" },
+          "created_at": { "$ref": "#/components/schemas/APITimestamp" },
+          "updated_at": { "$ref": "#/components/schemas/APITimestamp" }
         }
       },
       "InputTimestamp": {

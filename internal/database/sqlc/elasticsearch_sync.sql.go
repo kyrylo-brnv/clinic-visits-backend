@@ -246,20 +246,23 @@ func (q *Queries) ListPatientsForElasticsearchSync(ctx context.Context, patientI
 
 const listVisitSummariesForElasticsearchSync = `-- name: ListVisitSummariesForElasticsearchSync :many
 SELECT
-    id::text AS id,
-    doctor_id::text AS doctor_id,
-    patient_id::text AS patient_id,
-    clinic_id::text AS clinic_id,
-    status,
-    visit_start_time,
-    visit_end_time,
-    created_at,
-    updated_at
-FROM visits
-WHERE doctor_id = ANY($1::uuid[])
-   OR patient_id = ANY($2::uuid[])
-   OR clinic_id = ANY($3::uuid[])
-ORDER BY visit_start_time, id
+    v.id::text AS id,
+    v.doctor_id::text AS doctor_id,
+    v.patient_id::text AS patient_id,
+    p.first_name AS patient_first_name,
+    p.last_name AS patient_last_name,
+    v.clinic_id::text AS clinic_id,
+    v.status,
+    v.visit_start_time,
+    v.visit_end_time,
+    v.created_at,
+    v.updated_at
+FROM visits v
+JOIN patients p ON p.id = v.patient_id
+WHERE v.doctor_id = ANY($1::uuid[])
+   OR v.patient_id = ANY($2::uuid[])
+   OR v.clinic_id = ANY($3::uuid[])
+ORDER BY v.visit_start_time, v.id
 `
 
 type ListVisitSummariesForElasticsearchSyncParams struct {
@@ -269,15 +272,17 @@ type ListVisitSummariesForElasticsearchSyncParams struct {
 }
 
 type ListVisitSummariesForElasticsearchSyncRow struct {
-	ID             string
-	DoctorID       string
-	PatientID      string
-	ClinicID       string
-	Status         string
-	VisitStartTime pgtype.Timestamptz
-	VisitEndTime   pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               string
+	DoctorID         string
+	PatientID        string
+	PatientFirstName string
+	PatientLastName  string
+	ClinicID         string
+	Status           string
+	VisitStartTime   pgtype.Timestamptz
+	VisitEndTime     pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) ListVisitSummariesForElasticsearchSync(ctx context.Context, arg ListVisitSummariesForElasticsearchSyncParams) ([]ListVisitSummariesForElasticsearchSyncRow, error) {
@@ -293,6 +298,8 @@ func (q *Queries) ListVisitSummariesForElasticsearchSync(ctx context.Context, ar
 			&i.ID,
 			&i.DoctorID,
 			&i.PatientID,
+			&i.PatientFirstName,
+			&i.PatientLastName,
 			&i.ClinicID,
 			&i.Status,
 			&i.VisitStartTime,
