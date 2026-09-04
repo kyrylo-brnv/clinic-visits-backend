@@ -71,7 +71,7 @@ func TestBuildBackfillDocumentsEnrichesEveryDocument(t *testing.T) {
 	}
 
 	summary := VisitSummary{
-		ID: "visit-1", DoctorID: "doctor-1", PatientID: "patient-1", ClinicID: "clinic-1", Status: "CLOSED",
+		ID: "visit-1", DoctorID: "doctor-1", PatientID: "patient-1", PatientFullName: "Linus Pauling", ClinicID: "clinic-1", Status: "CLOSED",
 		VisitStartTime: visitStart, VisitEndTime: visitEnd, CreatedAt: createdAt, UpdatedAt: updatedAt,
 	}
 	want := backfillDocuments{

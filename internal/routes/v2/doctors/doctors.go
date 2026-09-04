@@ -9,6 +9,6 @@ import (
 func Register(mux *http.ServeMux, handler doctor.Handler) {
 	mux.HandleFunc(
 		"/v2/doctors/search",
-		handler.SearchDoctors,
+		handler.SearchDoctorsV2,
 	)
 }

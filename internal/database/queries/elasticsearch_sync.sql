@@ -66,17 +66,20 @@ ORDER BY id;
 
 -- name: ListVisitSummariesForElasticsearchSync :many
 SELECT
-    id::text AS id,
-    doctor_id::text AS doctor_id,
-    patient_id::text AS patient_id,
-    clinic_id::text AS clinic_id,
-    status,
-    visit_start_time,
-    visit_end_time,
-    created_at,
-    updated_at
-FROM visits
-WHERE doctor_id = ANY(sqlc.arg('doctor_ids')::uuid[])
-   OR patient_id = ANY(sqlc.arg('patient_ids')::uuid[])
-   OR clinic_id = ANY(sqlc.arg('clinic_ids')::uuid[])
-ORDER BY visit_start_time, id;
+    v.id::text AS id,
+    v.doctor_id::text AS doctor_id,
+    v.patient_id::text AS patient_id,
+    p.first_name AS patient_first_name,
+    p.last_name AS patient_last_name,
+    v.clinic_id::text AS clinic_id,
+    v.status,
+    v.visit_start_time,
+    v.visit_end_time,
+    v.created_at,
+    v.updated_at
+FROM visits v
+JOIN patients p ON p.id = v.patient_id
+WHERE v.doctor_id = ANY(sqlc.arg('doctor_ids')::uuid[])
+   OR v.patient_id = ANY(sqlc.arg('patient_ids')::uuid[])
+   OR v.clinic_id = ANY(sqlc.arg('clinic_ids')::uuid[])
+ORDER BY v.visit_start_time, v.id;

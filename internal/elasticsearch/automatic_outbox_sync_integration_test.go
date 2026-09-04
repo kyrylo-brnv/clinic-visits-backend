@@ -124,6 +124,8 @@ func TestAutomaticOutboxSyncUpdatesEveryReadModelAndRetries(t *testing.T) {
 	processAutomaticSyncBatch(t, processor, 3)
 	assertAutomaticSyncEntityDocuments(t, client, fixture, "Updated Sync Doctor", "UpdatedPatient", "Updated Sync Clinic")
 	assertAutomaticSyncVisitDocuments(t, client, fixture, "Updated Sync Doctor", "UpdatedPatient", "Updated Sync Clinic")
+	assertAutomaticSyncEntityVisitPatientName(t, client, DoctorsIndexName, fixture.doctorID, "Automatic UpdatedPatient")
+	assertAutomaticSyncEntityVisitPatientName(t, client, ClinicsIndexName, fixture.clinicID, "Automatic UpdatedPatient")
 
 	if _, err := pool.Exec(t.Context(), "UPDATE patients SET last_name = 'RetriedPatient' WHERE id = $1", fixture.patientID); err != nil {
 		t.Fatalf("update patient for retry: %v", err)
@@ -153,6 +155,8 @@ func TestAutomaticOutboxSyncUpdatesEveryReadModelAndRetries(t *testing.T) {
 		t.Fatalf("redeliver duplicate event: %v", err)
 	}
 	assertAutomaticSyncVisitDocuments(t, client, fixture, "Updated Sync Doctor", "RetriedPatient", "Updated Sync Clinic")
+	assertAutomaticSyncEntityVisitPatientName(t, client, DoctorsIndexName, fixture.doctorID, "Automatic RetriedPatient")
+	assertAutomaticSyncEntityVisitPatientName(t, client, ClinicsIndexName, fixture.clinicID, "Automatic RetriedPatient")
 
 	deleteAutomaticSyncVisit(t, pool, fixture.visitID)
 	processAutomaticSyncBatch(t, processor, 1)
@@ -553,6 +557,32 @@ func assertAutomaticSyncEntityVisit(t *testing.T, client *Client, indexName, id,
 	}
 	if len(visits) != 1 || visits[0].ID != visitID {
 		t.Fatalf("%s visits = %+v, want visit %s", indexName, visits, visitID)
+	}
+}
+
+func assertAutomaticSyncEntityVisitPatientName(t *testing.T, client *Client, indexName, id, want string) {
+	t.Helper()
+	var visits []VisitSummary
+	switch indexName {
+	case DoctorsIndexName:
+		var document DoctorDocument
+		found, err := client.GetDocument(t.Context(), indexName, id, &document)
+		if err != nil || !found {
+			t.Fatalf("load %s document: found=%t error=%v", indexName, found, err)
+		}
+		visits = document.Visits
+	case ClinicsIndexName:
+		var document ClinicDocument
+		found, err := client.GetDocument(t.Context(), indexName, id, &document)
+		if err != nil || !found {
+			t.Fatalf("load %s document: found=%t error=%v", indexName, found, err)
+		}
+		visits = document.Visits
+	default:
+		t.Fatalf("unsupported entity index %s", indexName)
+	}
+	if len(visits) != 1 || visits[0].PatientFullName != want {
+		t.Fatalf("%s patient full name = visits:%+v, want %q", indexName, visits, want)
 	}
 }
 

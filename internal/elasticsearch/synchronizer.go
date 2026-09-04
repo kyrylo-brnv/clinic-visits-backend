@@ -286,7 +286,8 @@ func addSyncVisitSummaries(
 		}
 		summary := VisitSummary{
 			ID: row.ID, DoctorID: row.DoctorID, PatientID: row.PatientID, ClinicID: row.ClinicID,
-			Status: row.Status, VisitStartTime: visitStartTime, VisitEndTime: visitEndTime,
+			PatientFullName: row.PatientFirstName + " " + row.PatientLastName,
+			Status:          row.Status, VisitStartTime: visitStartTime, VisitEndTime: visitEndTime,
 			CreatedAt: createdAt, UpdatedAt: updatedAt,
 		}
 		if document, ok := doctors[row.DoctorID]; ok {

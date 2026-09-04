@@ -675,10 +675,11 @@ func assertNestedVisits(t *testing.T, properties map[string]any) {
 		t.Errorf("visits type = %#v, want nested", visits["type"])
 	}
 	assertProperties(t, objectValue(t, visits, "properties"), map[string]string{
-		"id": "keyword", "doctor_id": "keyword", "patient_id": "keyword", "clinic_id": "keyword",
+		"id": "keyword", "doctor_id": "keyword", "patient_id": "keyword", "patient_full_name": "text", "clinic_id": "keyword",
 		"status": "keyword", "visit_start_time": "date", "visit_end_time": "date",
 		"created_at": "date", "updated_at": "date",
 	})
+	assertTextKeyword(t, objectValue(t, visits, "properties"), "patient_full_name")
 }
 
 func assertProperties(t *testing.T, properties map[string]any, expected map[string]string) {

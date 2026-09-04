@@ -360,6 +360,7 @@ func TestAddSyncVisitSummariesMaintainsOnlyLoadedEntityDocuments(t *testing.T) {
 	rows := []sqlc.ListVisitSummariesForElasticsearchSyncRow{
 		{
 			ID: testVisitID, DoctorID: testOldDoctorID, PatientID: testOldPatientID, ClinicID: testOldClinicID,
+			PatientFirstName: "Patient", PatientLastName: "Name",
 			Status: "SCHEDULED", VisitStartTime: timestampValue(visitStart),
 			VisitEndTime: timestampValue(visitStart.Add(time.Hour)), CreatedAt: timestampValue(visitStart),
 			UpdatedAt: timestampValue(visitStart),
@@ -376,7 +377,7 @@ func TestAddSyncVisitSummariesMaintainsOnlyLoadedEntityDocuments(t *testing.T) {
 	if err := addSyncVisitSummaries(doctors, patients, clinics, rows); err != nil {
 		t.Fatalf("addSyncVisitSummaries() error = %v", err)
 	}
-	if got := doctors[testOldDoctorID].Visits; len(got) != 1 || got[0].ID != testVisitID {
+	if got := doctors[testOldDoctorID].Visits; len(got) != 1 || got[0].ID != testVisitID || got[0].PatientFullName != "Patient Name" {
 		t.Fatalf("doctor visits = %#v", got)
 	}
 	if got := patients[testOldPatientID].Visits; len(got) != 1 || got[0].ID != testVisitID {
@@ -384,6 +385,22 @@ func TestAddSyncVisitSummariesMaintainsOnlyLoadedEntityDocuments(t *testing.T) {
 	}
 	if got := clinics[testOldClinicID].Visits; len(got) != 1 || got[0].ID != testVisitID {
 		t.Fatalf("clinic visits = %#v", got)
+	}
+}
+
+func TestAddPatientVisitRelationsIncludesAffectedDoctorAndClinic(t *testing.T) {
+	t.Parallel()
+
+	relations := relationIDs(nil, []string{testOldPatientID}, nil)
+	addPatientVisitRelations(&relations, []sqlc.ListVisitSummariesForElasticsearchSyncRow{{
+		DoctorID:  testNewDoctorID,
+		PatientID: testOldPatientID,
+		ClinicID:  testNewClinicID,
+	}})
+
+	want := relationIDs([]string{testNewDoctorID}, []string{testOldPatientID}, []string{testNewClinicID})
+	if !reflect.DeepEqual(relations, want) {
+		t.Fatalf("patient relations = %#v, want %#v", relations, want)
 	}
 }
 

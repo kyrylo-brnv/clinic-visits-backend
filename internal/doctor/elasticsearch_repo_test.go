@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smithautotest/clinic-visits/internal/elasticsearch"
 )
@@ -27,7 +28,7 @@ func (s *fakeDoctorDocumentSearcher) Search(_ context.Context, indexName string,
 func TestElasticsearchRepositoryFindDoctorsBuildsV1CompatibleQuery(t *testing.T) {
 	searcher := &fakeDoctorDocumentSearcher{
 		documents: []json.RawMessage{
-			json.RawMessage(`{"id":"doctor-1","specialty_id":"specialty-1","clinic_id":"clinic-1","full_name":"Jane Doe"}`),
+			json.RawMessage(`{"id":"doctor-1","specialty_id":"specialty-1","clinic_id":"clinic-1","full_name":"Jane Doe","visits":[{"id":"visit-1","doctor_id":"doctor-1","patient_id":"patient-1","patient_full_name":"Ada Lovelace","clinic_id":"clinic-1","status":"SCHEDULED","visit_start_time":"2026-08-06T14:30:45Z","visit_end_time":"2026-08-06T15:30:45Z","created_at":"2026-08-05T14:30:45Z","updated_at":"2026-08-05T15:30:45Z"}]}`),
 		},
 	}
 	repository := NewElasticsearchRepository(searcher)
@@ -76,6 +77,14 @@ func TestElasticsearchRepositoryFindDoctorsBuildsV1CompatibleQuery(t *testing.T)
 		SpecialtyID: "specialty-1",
 		ClinicID:    "clinic-1",
 		FullName:    "Jane Doe",
+		Visits: []VisitSummary{{
+			ID: "visit-1", DoctorID: "doctor-1", PatientID: "patient-1", PatientFullName: "Ada Lovelace",
+			ClinicID: "clinic-1", Status: "SCHEDULED",
+			VisitStartTime: time.Date(2026, time.August, 6, 14, 30, 45, 0, time.UTC),
+			VisitEndTime:   time.Date(2026, time.August, 6, 15, 30, 45, 0, time.UTC),
+			CreatedAt:      time.Date(2026, time.August, 5, 14, 30, 45, 0, time.UTC),
+			UpdatedAt:      time.Date(2026, time.August, 5, 15, 30, 45, 0, time.UTC),
+		}},
 	}}
 	if !reflect.DeepEqual(doctors, wantDoctors) {
 		t.Fatalf("FindDoctors() = %#v, want %#v", doctors, wantDoctors)

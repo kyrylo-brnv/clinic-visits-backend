@@ -197,6 +197,44 @@ func TestDeltaSynchronizerVisitRefreshesOldAndCurrentRelationsThenVisit(t *testi
 	}
 }
 
+func TestDeltaSynchronizerPatientRefreshesAffectedDoctorAndClinic(t *testing.T) {
+	t.Parallel()
+
+	updatedSummary := VisitSummary{ID: testVisitID, PatientID: testOldPatientID, PatientFullName: "Updated Patient"}
+	snapshot := deltaSyncSnapshot{
+		indexName: PatientsIndexName,
+		targets:   stringSet(testOldPatientID),
+		visits:    map[string]VisitDocument{testVisitID: {ID: testVisitID}},
+		visitIDs:  stringSet(testVisitID),
+		doctors: map[string]DoctorDocument{
+			testNewDoctorID: {ID: testNewDoctorID, Visits: []VisitSummary{updatedSummary}},
+		},
+		patients: map[string]PatientDocument{
+			testOldPatientID: {ID: testOldPatientID, Visits: []VisitSummary{updatedSummary}},
+		},
+		clinics: map[string]ClinicDocument{
+			testNewClinicID: {ID: testNewClinicID, Visits: []VisitSummary{updatedSummary}},
+		},
+		relations: relationIDs([]string{testNewDoctorID}, []string{testOldPatientID}, []string{testNewClinicID}),
+	}
+	store := &recordingDeltaStore{indexed: map[string]map[string]any{
+		PatientsIndexName: {testOldPatientID: PatientDocument{ID: testOldPatientID}},
+	}}
+
+	if err := (&deltaSynchronizer{loader: &recordingDeltaLoader{snapshot: snapshot}, store: store}).Sync(t.Context(), PatientsIndexName, []string{testOldPatientID}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	want := []documentStoreCall{
+		{operation: "upsert", index: VisitsIndexName, id: testVisitID, document: snapshot.visits[testVisitID]},
+		{operation: "upsert", index: DoctorsIndexName, id: testNewDoctorID, document: snapshot.doctors[testNewDoctorID]},
+		{operation: "upsert", index: PatientsIndexName, id: testOldPatientID, document: snapshot.patients[testOldPatientID]},
+		{operation: "upsert", index: ClinicsIndexName, id: testNewClinicID, document: snapshot.clinics[testNewClinicID]},
+	}
+	if !reflect.DeepEqual(store.calls, want) {
+		t.Fatalf("document calls = %#v, want %#v", store.calls, want)
+	}
+}
+
 func TestDeltaSynchronizerMissingVisitRefreshesRelationsThenDeletesVisit(t *testing.T) {
 	t.Parallel()
 

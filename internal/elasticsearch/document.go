@@ -39,15 +39,16 @@ type ClinicDocument struct {
 
 // VisitSummary is the nested visit representation embedded in entity documents.
 type VisitSummary struct {
-	ID             string    `json:"id"`
-	DoctorID       string    `json:"doctor_id"`
-	PatientID      string    `json:"patient_id"`
-	ClinicID       string    `json:"clinic_id"`
-	Status         string    `json:"status"`
-	VisitStartTime time.Time `json:"visit_start_time"`
-	VisitEndTime   time.Time `json:"visit_end_time"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	DoctorID        string    `json:"doctor_id"`
+	PatientID       string    `json:"patient_id"`
+	PatientFullName string    `json:"patient_full_name"`
+	ClinicID        string    `json:"clinic_id"`
+	Status          string    `json:"status"`
+	VisitStartTime  time.Time `json:"visit_start_time"`
+	VisitEndTime    time.Time `json:"visit_end_time"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // VisitDocument is the searchable document stored in the visits index.

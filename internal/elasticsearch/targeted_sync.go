@@ -242,6 +242,30 @@ func loadDeltaRelatedDocuments(ctx context.Context, queries *sqlc.Queries, snaps
 		return fmt.Errorf("parse related clinic IDs: %w", err)
 	}
 
+	visitRows, err := queries.ListVisitSummariesForElasticsearchSync(ctx, sqlc.ListVisitSummariesForElasticsearchSyncParams{
+		DoctorIds: doctorIDs, PatientIds: patientIDs, ClinicIds: clinicIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("list related visits: %w", err)
+	}
+	if snapshot.indexName == PatientsIndexName {
+		addPatientVisitRelations(&snapshot.relations, visitRows)
+		doctorIDs, err = parseSortedUUIDs(snapshot.relations.doctors)
+		if err != nil {
+			return fmt.Errorf("parse affected doctor IDs: %w", err)
+		}
+		clinicIDs, err = parseSortedUUIDs(snapshot.relations.clinics)
+		if err != nil {
+			return fmt.Errorf("parse affected clinic IDs: %w", err)
+		}
+		visitRows, err = queries.ListVisitSummariesForElasticsearchSync(ctx, sqlc.ListVisitSummariesForElasticsearchSyncParams{
+			DoctorIds: doctorIDs, PatientIds: patientIDs, ClinicIds: clinicIDs,
+		})
+		if err != nil {
+			return fmt.Errorf("list affected visits: %w", err)
+		}
+	}
+
 	doctorRows, err := queries.ListDoctorsForElasticsearchSync(ctx, doctorIDs)
 	if err != nil {
 		return fmt.Errorf("list related doctors: %w", err)
@@ -253,12 +277,6 @@ func loadDeltaRelatedDocuments(ctx context.Context, queries *sqlc.Queries, snaps
 	clinicRows, err := queries.ListClinicsForElasticsearchSync(ctx, clinicIDs)
 	if err != nil {
 		return fmt.Errorf("list related clinics: %w", err)
-	}
-	visitRows, err := queries.ListVisitSummariesForElasticsearchSync(ctx, sqlc.ListVisitSummariesForElasticsearchSyncParams{
-		DoctorIds: doctorIDs, PatientIds: patientIDs, ClinicIds: clinicIDs,
-	})
-	if err != nil {
-		return fmt.Errorf("list related visits: %w", err)
 	}
 
 	snapshot.doctors, err = mapSyncDoctorDocuments(doctorRows)
@@ -282,6 +300,13 @@ func loadDeltaRelatedDocuments(ctx context.Context, queries *sqlc.Queries, snaps
 		}
 	}
 	return nil
+}
+
+func addPatientVisitRelations(relations *visitRelationIDs, visits []sqlc.ListVisitSummariesForElasticsearchSyncRow) {
+	for _, visit := range visits {
+		relations.doctors[visit.DoctorID] = struct{}{}
+		relations.clinics[visit.ClinicID] = struct{}{}
+	}
 }
 
 func loadDeltaVisitDocuments(
